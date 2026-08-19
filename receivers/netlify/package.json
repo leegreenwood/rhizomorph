@@ -1,0 +1,15 @@
+{
+  "name": "rhizomorph-netlify-receiver",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Receives Netlify deploy_succeeded / deploy_failed webhooks and raises a Moshi alert",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}

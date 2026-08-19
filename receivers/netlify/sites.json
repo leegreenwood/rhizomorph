@@ -1,0 +1,5 @@
+{
+  "_comment": "Optional friendly-name overrides. Key by Netlify site_id (preferred, stable across renames) or site name. Unmapped sites fall back to the payload's own site name, so adding a new project's webhook here is optional, not required.",
+  "by_site_id": {},
+  "by_name": {}
+}
