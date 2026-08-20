@@ -1,0 +1,14 @@
+{
+  "name": "rhizomorph-github-receiver",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Receives GitHub workflow_run webhooks and raises a Moshi alert on Actions run success/failure",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

@@ -54,14 +54,23 @@ function validSignature(token, rawBody) {
   }
 }
 
+const MOSHI_RETRY_DELAYS_MS = [5000, 15000, 30000]; // backoff on 429 — Moshi's free tier resets its quota every 60s
+
 async function notifyMoshi({ title, message }) {
-  const res = await fetch("https://api.getmoshi.app/api/webhook", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: MOSHI_TOKEN, title, message, unified: true }),
-  });
-  if (!res.ok) {
-    console.error("Moshi notify failed:", res.status, await res.text().catch(() => ""));
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch("https://api.getmoshi.app/api/webhook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: MOSHI_TOKEN, title, message, unified: true }),
+    });
+    if (res.ok) return;
+    if (res.status !== 429 || attempt === MOSHI_RETRY_DELAYS_MS.length) {
+      console.error("Moshi notify failed:", res.status, await res.text().catch(() => ""));
+      return;
+    }
+    const delay = MOSHI_RETRY_DELAYS_MS[attempt];
+    console.warn(`Moshi rate-limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${MOSHI_RETRY_DELAYS_MS.length})`);
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
 }
 
