@@ -15,7 +15,7 @@ This is enforced structurally, not just by convention:
 
 ## Architecture
 
-- **Host**: this Mac, reachable via Tailscale (`lees-mac-mini.taile2c8d3.ts.net`).
+- **Host**: this Mac, reachable via Tailscale (`lees-mac-studio.taile2c8d3.ts.net`).
 - **Session**: one persistent, named Herdr session/workspace ("Rhizomorph") — long-lived, not spun up on demand. This repo's `cwd` is that workspace.
 - **Agent runtime**: Claude Code running inside that Herdr session.
 - **Alerting**: `moshi-hook` is paired and running as a persistent `brew services` daemon, with Claude Code hooks installed. It reports Claude Code's own approval prompts. Point-to-point notifications (e.g. from the Netlify receiver below) instead POST directly to Moshi's webhook API (`https://api.getmoshi.app/api/webhook`) with a bearer-style `token` — a separate, simpler mechanism from the hook-based approval flow.
@@ -28,7 +28,7 @@ This is enforced structurally, not just by convention:
 [`receivers/netlify/`](receivers/netlify/) is a small Express receiver that verifies Netlify's JWS-signed deploy webhook, then posts a Moshi push: quiet confirmation on `deploy_succeeded`, alert with the error detail on `deploy_failed`. It never mutates anything — pure notify, consistent with the no-autonomous-actions principle (there's nothing to approve here).
 
 - **Runs**: as a plain background Node process inside this Herdr workspace (started with `nohup`, not a system service — see [Why not launchd](#why-not-launchd) below), listening on `127.0.0.1:8788`.
-- **Exposed at**: `https://lees-mac-mini.taile2c8d3.ts.net/netlify/webhook` via `tailscale funnel --set-path=/netlify/webhook`, alongside Hyphae's existing `/mcp` path on the same hostname.
+- **Exposed at**: `https://lees-mac-studio.taile2c8d3.ts.net/netlify/webhook` via `tailscale funnel --set-path=/netlify/webhook`, alongside Hyphae's existing `/mcp` path on the same hostname.
 - **Config**: `receivers/netlify/.env` (gitignored) needs `PORT`, `NETLIFY_WEBHOOK_SECRET` (the JWS secret, also pasted into each site's Netlify notification config), and `MOSHI_WEBHOOK_TOKEN`.
 - **Wired up sites**: iyvs, zanshinarchery, greenwoodbushcraft, ownpaceoutfitters (added manually via each site's *Project configuration → Notifications → Deploy notifications*, since the Netlify API's `createHookBySiteId` rejected every payload shape tried with an unhelpful 422 — the dashboard path was faster and is the officially documented method anyway).
 - **To restart**: from within the Rhizomorph workspace, `cd receivers/netlify && set -a && source .env && set +a && nohup node "$(pwd)/server.js" >> logs/out.log 2>&1 &` — see the process-naming gotcha below first.
@@ -38,7 +38,7 @@ This is enforced structurally, not just by convention:
 [`receivers/github/`](receivers/github/) is a small Express receiver that verifies GitHub's HMAC-signed webhook, then posts a Moshi push on Actions `workflow_run` completion: success or failure, including a link straight to the run's logs. Built specifically to cover deploys that go through GitHub Actions to Azure rather than through Netlify — same blind spot the Netlify receiver doesn't see. Notify-only, same as Netlify — nothing here mutates anything.
 
 - **Runs**: as a plain background Node process inside this Herdr workspace (`nohup`, not a system service — see [Why not launchd](#why-not-launchd)), listening on `127.0.0.1:8789`.
-- **Exposed at**: `https://lees-mac-mini.taile2c8d3.ts.net/github/webhook` via `tailscale funnel --set-path=/github/webhook`, alongside `/netlify/webhook` and Hyphae's `/mcp` on the same hostname.
+- **Exposed at**: `https://lees-mac-studio.taile2c8d3.ts.net/github/webhook` via `tailscale funnel --set-path=/github/webhook`, alongside `/netlify/webhook` and Hyphae's `/mcp` on the same hostname.
 - **Config**: `receivers/github/.env` (gitignored) needs `PORT`, `GITHUB_WEBHOOK_SECRET` (shared HMAC secret, also pasted into each repo's GitHub webhook config), and `MOSHI_WEBHOOK_TOKEN`.
 - **Wired up repos**: `attested` (the actual motivating case — deploys to Azure Container Apps + Azure Static Web Apps via `deploy.yml`/`deploy-website.yml`, neither visible to Netlify), plus iyvs, zanshinarchery, greenwoodbushcraft, ownpaceoutfitters (same four as the Netlify sites, added for consistency). All added via `gh api repos/{owner}/{repo}/hooks`, events restricted to `workflow_run` only. Ping delivery confirmed 200 on all five; success/failure notification logic verified against `attested` with signed simulated payloads (a real end-to-end test would require an actual push-triggered Azure deploy, which wasn't done just to test notifications).
 - **Known limitation**: Moshi's webhook API rate-limits at 10 notifications/minute on the free tier (`429` on excess) — confirmed by hitting it during testing. The receiver doesn't retry on a dropped push, so a burst of failures in the same minute could mean a later one silently doesn't page.

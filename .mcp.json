@@ -2,7 +2,7 @@
   "mcpServers": {
     "hyphae": {
       "type": "stdio",
-      "command": "/Users/leegreenwood/.nvm/versions/node/v22.8.0/bin/node",
+      "command": "/opt/homebrew/opt/node@22/bin/node",
       "args": ["server.js"],
       "cwd": "/Volumes/Flexdrive/Code/hyphae"
     },
