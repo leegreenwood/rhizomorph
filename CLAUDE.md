@@ -44,6 +44,10 @@ Repo scope is enforced by which repos have the webhook configured (GitHub Settin
 
 Exposure: Tailscale Funnel path-routes `/netlify/webhook` and `/github/webhook` to `127.0.0.1:8788` and `127.0.0.1:8789` respectively, off the same tailnet hostname Hyphae's `/mcp` proxy already uses (`tailscale funnel status` shows all three). Adding a new signal source means adding another `--set-path` route rather than a new hostname/port scheme elsewhere.
 
+## Scheduled checks
+
+`checks/<name>/` holds scheduled scripts (own README, `.env`, plist). First one: `checks/repeat-after-completion/` — run `node --test` there for tests and `node repeat.js --dry-run` before any real run. It writes to Apple Reminders through `~/bin/remctl` (not on PATH), only for reminders carrying an `#after-*` tag, so it is exempt from the approval gate; never extend that exemption to other checks.
+
 ## Known environment gotchas (this Mac specifically)
 
 - **launchd cannot spawn from `/Volumes/Flexdrive`.** A LaunchAgent pointed at this repo fails immediately (`EX_CONFIG`, no logs ever written) even though the same code runs fine interactively. This is why receivers run as `nohup`'d background processes inside the Herdr session instead of `brew services`/launchd-managed daemons. Don't reach for launchd for future receivers on this repo without expecting the same failure.

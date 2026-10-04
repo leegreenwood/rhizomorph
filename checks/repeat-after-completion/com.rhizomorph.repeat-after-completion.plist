@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.rhizomorph.repeat-after-completion</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/node@22/bin/node</string>
+    <string>/Users/leegreenwood/Code/rhizomorph/checks/repeat-after-completion/repeat.js</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/leegreenwood/Code/rhizomorph/checks/repeat-after-completion</string>
+  <key>StartInterval</key><integer>3600</integer>
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>/Users/leegreenwood</string>
+    <key>PATH</key><string>/opt/homebrew/opt/node@22/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/leegreenwood/Code/rhizomorph/checks/repeat-after-completion/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/leegreenwood/Code/rhizomorph/checks/repeat-after-completion/logs/launchd.err.log</string>
+</dict>
+</plist>

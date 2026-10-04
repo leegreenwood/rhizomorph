@@ -52,7 +52,11 @@ A `launchd` LaunchAgent pointed at anything under `/Volumes/Flexdrive` fails to 
 
 More than one unrelated Node service on this Mac is literally named `server.js` (Hyphae's MCP HTTP proxy is one, and now two receivers in this repo). **Never** `pkill -f "node server.js"` or kill by that bare pattern — it will also kill unrelated services, which happened once already during setup. Always target by full path: `pgrep -fl "receivers/netlify/server.js"` or `pgrep -fl "receivers/github/server.js"` — this only works if the process was launched with the absolute path per the restart commands above, not a bare relative `node server.js`.
 
-### 3. OmniFocus daily digest — not planned
+### 3. Reminders repeat-after-completion — scheduled check
+
+[`checks/repeat-after-completion/`](checks/repeat-after-completion/) gives Apple Reminders "repeat N days/weeks/months after completion" via `#after-<N><d|w|m|y>` tags, using the RemCTL CLI. Hourly via a per-user **launchd** LaunchAgent (a deliberate exception to the `/schedule` preference below: it is a deterministic script that must run whether or not the Herdr session is up, and this repo sits on local disk so the Flexdrive launchd problem doesn't apply). Mutates only Reminders the user has opted in with a tag, never deletes, so it isn't approval-gated; failures push through the same Moshi webhook as the receivers. Details, flags and install steps in its README.
+
+### 4. OmniFocus daily digest — not planned
 
 Was floated as a candidate signal source; confirmed **not** a planned feature. The OmniFocus MCP server has been removed from `.mcp.json`.
 
