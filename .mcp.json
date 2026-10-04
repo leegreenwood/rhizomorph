@@ -7,6 +7,14 @@
         "server.js"
       ],
       "cwd": "/Volumes/Flexdrive/Code/hyphae"
+    },
+    "remctl": {
+      "type": "stdio",
+      "command": "/Library/RemCTL/Python/c6ab23043487dfe0009af59144a8766b7747379279c9766301129c65a74b3818/bin/python3.13",
+      "args": [
+        "/Users/leegreenwood/bin/remctl",
+        "mcp"
+      ]
     }
   }
 }
