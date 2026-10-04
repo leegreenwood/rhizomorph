@@ -3,15 +3,10 @@
     "hyphae": {
       "type": "stdio",
       "command": "/opt/homebrew/opt/node@22/bin/node",
-      "args": ["server.js"],
-      "cwd": "/Volumes/Flexdrive/Code/hyphae"
-    },
-    "OmniFocus": {
-      "command": "npx",
       "args": [
-        "-y",
-        "omnifocus-mcp"
-      ]
+        "server.js"
+      ],
+      "cwd": "/Volumes/Flexdrive/Code/hyphae"
     }
   }
 }

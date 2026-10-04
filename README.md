@@ -54,7 +54,7 @@ More than one unrelated Node service on this Mac is literally named `server.js` 
 
 ### 3. OmniFocus daily digest — not planned
 
-Was floated as a candidate signal source; confirmed **not** an actual planned feature for now. `.mcp.json` still wires up the OmniFocus MCP server in case this changes later, but there's no receiver, schedule, or routine built for it.
+Was floated as a candidate signal source; confirmed **not** a planned feature. The OmniFocus MCP server has been removed from `.mcp.json`.
 
 ## Scheduling approach
 
