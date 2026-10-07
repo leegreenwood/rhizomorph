@@ -56,7 +56,11 @@ More than one unrelated Node service on this Mac is literally named `server.js` 
 
 [`checks/repeat-after-completion/`](checks/repeat-after-completion/) gives Apple Reminders "repeat N days/weeks/months after completion" via `#after-<N><d|w|m|y>` tags, using the RemCTL CLI. Hourly via a per-user **launchd** LaunchAgent (a deliberate exception to the `/schedule` preference below: it is a deterministic script that must run whether or not the Herdr session is up, and this repo sits on local disk so the Flexdrive launchd problem doesn't apply). Mutates only Reminders the user has opted in with a tag, never deletes, so it isn't approval-gated; failures push through the same Moshi webhook as the receivers. Details, flags and install steps in its README.
 
-### 4. OmniFocus daily digest — not planned
+### 4. Board labels — scheduled check
+
+[`checks/board-labels/`](checks/board-labels/) prints a Brother QL-810W label for every Gmail thread tagged `board` (subject, sender, date) and retags it `on-board`, so sticking the label on the office card board is the act of pulling an email into active work — replacing the old forward-to-Trello routing for active items. Plain Python, no AI call: reads mail through Superhuman's remote MCP server with a device-code OAuth grant whose refresh token lives in the login Keychain, so it runs unattended. Every 5 minutes via a per-user launchd LaunchAgent, same reasoning as `repeat-after-completion`; mutates only the one tag on threads the user opted in, so not approval-gated. Details, flags and setup in its README.
+
+### 5. OmniFocus daily digest — not planned
 
 Was floated as a candidate signal source; confirmed **not** a planned feature. The OmniFocus MCP server has been removed from `.mcp.json`.
 

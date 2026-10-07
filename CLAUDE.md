@@ -48,6 +48,8 @@ Exposure: Tailscale Funnel path-routes `/netlify/webhook` and `/github/webhook` 
 
 `checks/<name>/` holds scheduled scripts (own README, `.env`, plist). First one: `checks/repeat-after-completion/` — run `node --test` there for tests and `node repeat.js --dry-run` before any real run. It writes to Apple Reminders through `~/bin/remctl` (not on PATH), only for reminders carrying an `#after-*` tag, so it is exempt from the approval gate; never extend that exemption to other checks.
 
+`checks/board-labels/` (Python, own `.venv`, `pip install -r requirements.txt`) prints a label per Gmail thread tagged `board` via Superhuman's MCP server and swaps the tag to `on-board`; run `board_labels.py --dry-run` before a real run, `--auth` once to store the OAuth refresh token in the Keychain. Its only write is that one tag swap on opted-in threads — the same narrow exemption, not a precedent.
+
 ## Known environment gotchas (this Mac specifically)
 
 - **launchd cannot spawn from `/Volumes/Flexdrive`.** A LaunchAgent pointed at this repo fails immediately (`EX_CONFIG`, no logs ever written) even though the same code runs fine interactively. This is why receivers run as `nohup`'d background processes inside the Herdr session instead of `brew services`/launchd-managed daemons. Don't reach for launchd for future receivers on this repo without expecting the same failure.
