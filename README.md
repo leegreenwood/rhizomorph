@@ -64,6 +64,10 @@ More than one unrelated Node service on this Mac is literally named `server.js` 
 
 Was floated as a candidate signal source; confirmed **not** a planned feature. The OmniFocus MCP server has been removed from `.mcp.json`.
 
+## Local model helper
+
+[`bin/local-llm`](bin/local-llm) lets Claude hand small, self-contained jobs to the local MLX model (served by `raycast/mlx-start.sh`) while staying the coordinator: Claude runs it through Bash, gets the reply on stdout and reviews it. It works the same in VS Code, a terminal or a Herdr pane, local or over `herdr --remote`, and writes nothing, so it sits outside the approval gate. Watch it work with `tail -f ~/Library/Logs/local-llm.log`. A later step could run a full local coding agent in a sibling Herdr pane, driven with `herdr agent prompt`, once a larger model is available.
+
 ## Scheduling approach
 
 Favoring **in-session `/schedule`** over headless `claude -p` + cron/launchd: since the Herdr session is meant to stay up long-term anyway, session-scoped routines survive as long as Rhizomorph does, and everything — webhook handling and scheduled checks — lives in one coherent agent identity rather than being split across a separate cron script. (No routines registered yet — the Netlify receiver above is a standalone process, not a `/schedule` routine.)

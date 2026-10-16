@@ -1,0 +1,107 @@
+#!/bin/bash
+#
+# local-llm — send a one-shot prompt to the local MLX model server and print the reply.
+#
+# Meant for Claude to hand off small, self-contained jobs (boilerplate drafts, file
+# summaries, test-case lists) to the local model. It only reads files and prints text;
+# it never writes to the repo, so whatever Claude does with the reply still goes through
+# the normal permission prompts.
+#
+# Usage:
+#   local-llm [-f FILE]... [-s SYSTEM] [-t MAX_TOKENS] [-r] [PROMPT]
+#   echo "PROMPT" | local-llm [-f FILE]...
+#
+#   -f FILE        include FILE's contents as context (repeatable)
+#   -s SYSTEM      system prompt (default: a concise-coding-assistant prompt)
+#   -t MAX_TOKENS  reply length cap (default 2048; the server's own default is low)
+#   -r             let the model reason before answering (slower; reasoning counts
+#                  against MAX_TOKENS, so raise -t too)
+#
+# Every request and reply is appended to $LOCAL_LLM_LOG, so you can watch the local
+# model work with `tail -f ~/Library/Logs/local-llm.log` in a herdr pane or VS Code
+# terminal. Start the server first with raycast/mlx-start.sh.
+
+set -euo pipefail
+
+URL="${LOCAL_LLM_URL:-http://127.0.0.1:8080/v1}"
+LOG="${LOCAL_LLM_LOG:-$HOME/Library/Logs/local-llm.log}"
+SYSTEM="You are a concise, careful coding assistant. Reply with only what was asked for."
+MAX_TOKENS=2048
+THINKING=false
+FILES=()
+
+usage() { sed -n '/^# Usage:/,/^# Every/p' "$0" | sed '$d; s/^# \{0,1\}//' >&2; exit 2; }
+
+while getopts "f:s:t:rh" opt; do
+  case "$opt" in
+    f) [ -r "$OPTARG" ] || { echo "local-llm: cannot read $OPTARG" >&2; exit 2; }
+       FILES+=("$OPTARG") ;;
+    s) SYSTEM="$OPTARG" ;;
+    t) MAX_TOKENS="$OPTARG" ;;
+    r) THINKING=true ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+if [ $# -gt 0 ]; then
+  PROMPT="$*"
+elif [ ! -t 0 ]; then
+  PROMPT="$(cat)"
+else
+  usage
+fi
+
+if ! curl -sf -m 3 "$URL/models" >/dev/null; then
+  echo "local-llm: no MLX server at $URL — start it with raycast/mlx-start.sh" >&2
+  exit 1
+fi
+
+# Prepend each file as a fenced block headed by its path.
+CONTEXT=""
+for f in "${FILES[@]+"${FILES[@]}"}"; do
+  CONTEXT+="File: $f"$'\n```\n'"$(cat "$f")"$'\n```\n\n'
+done
+
+# jq builds the JSON so prompt and file text are never interpolated into shell or JSON.
+PAYLOAD=$(jq -n \
+  --arg system "$SYSTEM" \
+  --arg user "$CONTEXT$PROMPT" \
+  --argjson max_tokens "$MAX_TOKENS" \
+  --argjson thinking "$THINKING" \
+  '{messages: [{role: "system", content: $system}, {role: "user", content: $user}],
+    max_tokens: $max_tokens, temperature: 0.2,
+    chat_template_kwargs: {enable_thinking: $thinking}}')
+
+START=$(date +%s)
+RESPONSE=$(curl -sS -X POST "$URL/chat/completions" \
+  -H 'Content-Type: application/json' --data-binary "$PAYLOAD")
+
+REPLY=$(jq -r '.choices[0].message.content // empty' <<<"$RESPONSE")
+if [ -z "$REPLY" ] && jq -e '.choices[0].message.reasoning' <<<"$RESPONSE" >/dev/null; then
+  echo "local-llm: the model used all $MAX_TOKENS tokens reasoning and never answered (raise -t)" >&2
+  exit 1
+elif [ -z "$REPLY" ]; then
+  echo "local-llm: unexpected response from server:" >&2
+  echo "$RESPONSE" >&2
+  exit 1
+fi
+
+FINISH=$(jq -r '.choices[0].finish_reason // "?"' <<<"$RESPONSE")
+TOKENS=$(jq -r '.usage.completion_tokens // "?"' <<<"$RESPONSE")
+
+mkdir -p "$(dirname "$LOG")"
+{
+  echo "===== $(date '+%Y-%m-%d %H:%M:%S') — $(( $(date +%s) - START ))s, $TOKENS tokens, finish: $FINISH"
+  [ ${#FILES[@]} -gt 0 ] && echo "files: ${FILES[*]}"
+  echo "--- prompt"
+  echo "$PROMPT"
+  echo "--- reply"
+  echo "$REPLY"
+  echo
+} >>"$LOG"
+
+echo "$REPLY"
+if [ "$FINISH" = "length" ]; then
+  echo "local-llm: reply hit the $MAX_TOKENS-token cap and is truncated (raise it with -t)" >&2
+fi

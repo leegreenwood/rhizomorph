@@ -50,6 +50,10 @@ Exposure: Tailscale Funnel path-routes `/netlify/webhook` and `/github/webhook` 
 
 `checks/board-labels/` (Python, own `.venv`, `pip install -r requirements.txt`) prints a label per Gmail thread tagged `board` via Superhuman's MCP server and swaps the tag to `on-board`; run `board_labels.py --dry-run` before a real run, `--auth` once to store the OAuth refresh token in the Keychain. Its only write is that one tag swap on opted-in threads — the same narrow exemption, not a precedent.
 
+## Local model helper
+
+`bin/local-llm` sends a one-shot prompt (plus `-f FILE` context) to the local MLX server on `127.0.0.1:8080` and prints the reply — use it to hand off small, self-contained jobs (boilerplate drafts, file summaries, test-case lists) instead of doing them yourself, then review the reply before using it. It only reads and prints, so it needs no approval; anything written from its output goes through the normal prompts. Thinking is off by default (`-r` turns it on; raise `-t` with it). If it reports no server, start one with `raycast/mlx-start.sh`. Every call is logged to `~/Library/Logs/local-llm.log`.
+
 ## Known environment gotchas (this Mac specifically)
 
 - **launchd cannot spawn from `/Volumes/Flexdrive`.** A LaunchAgent pointed at this repo fails immediately (`EX_CONFIG`, no logs ever written) even though the same code runs fine interactively. This is why receivers run as `nohup`'d background processes inside the Herdr session instead of `brew services`/launchd-managed daemons. Don't reach for launchd for future receivers on this repo without expecting the same failure.
