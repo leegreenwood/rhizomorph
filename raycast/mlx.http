@@ -1,0 +1,71 @@
+# Requests for the local MLX model server, for the VS Code REST Client extension
+# (humao.rest-client). Start the server first with the "Start MLX Model Server"
+# Raycast command, then click "Send Request" above any request below.
+#
+# mlx_lm.server serves only the model it was started with, so "model" is omitted.
+# max_tokens defaults low, so each request sets it.
+
+@base = http://127.0.0.1:8080/v1
+
+### Check the server is up (200 OK; the model list is empty because the model
+### is loaded from a local path rather than the Hugging Face cache)
+GET {{base}}/models
+
+### Simple chat
+POST {{base}}/chat/completions
+Content-Type: application/json
+
+{
+  "messages": [
+    { "role": "user", "content": "Explain what a JWS is in two sentences." }
+  ],
+  "max_tokens": 300
+}
+
+### Chat with a system prompt and sampling settings
+POST {{base}}/chat/completions
+Content-Type: application/json
+
+{
+  "messages": [
+    { "role": "system", "content": "You are a concise senior .NET engineer. Answer with code where helpful." },
+    { "role": "user", "content": "How do I compare two byte arrays in constant time in C#?" }
+  ],
+  "max_tokens": 500,
+  "temperature": 0.2,
+  "top_p": 0.9
+}
+
+### Multi-turn conversation (paste earlier replies in as assistant messages)
+POST {{base}}/chat/completions
+Content-Type: application/json
+
+{
+  "messages": [
+    { "role": "user", "content": "Suggest a name for a webhook receiver service." },
+    { "role": "assistant", "content": "How about \"Rhizomorph\"?" },
+    { "role": "user", "content": "Why might that name suit it?" }
+  ],
+  "max_tokens": 300
+}
+
+### Streaming (REST Client shows the raw server-sent event chunks once the stream ends)
+POST {{base}}/chat/completions
+Content-Type: application/json
+
+{
+  "messages": [
+    { "role": "user", "content": "Count from 1 to 10, one number per line." }
+  ],
+  "max_tokens": 100,
+  "stream": true
+}
+
+### Plain text completion (no chat template)
+POST {{base}}/completions
+Content-Type: application/json
+
+{
+  "prompt": "The three primary colours are",
+  "max_tokens": 50
+}
