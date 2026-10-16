@@ -94,7 +94,7 @@ test("planReminder ignores untagged and open untagged-recurrence reminders", () 
 });
 
 test("planReminder reschedules a completed tagged reminder from its completion date", () => {
-  assert.deepEqual(planReminder(base, NOW), { action: "reschedule", due: "2026-11-02", stripRecurrence: false, completionSource: "remctl", interval: "after-1m" });
+  assert.deepEqual(planReminder(base, NOW), { action: "reschedule", due: "2026-11-02", allDay: true, stripRecurrence: false, completionSource: "remctl", interval: "after-1m" });
 });
 
 test("planReminder keeps timed reminders timed", () => {
@@ -118,7 +118,16 @@ test("planReminder skips unparseable, ambiguous and due-less reminders without s
   assert.match(planReminder({ ...base, tags: ["after-3x"] }, NOW).reason, /unparseable/);
   assert.match(planReminder({ ...base, tags: ["after-1d", "after-2d"] }, NOW).reason, /multiple/);
   assert.match(planReminder({ ...base, tags: ["after-1d", "after-bad"] }, NOW).reason, /unparseable/);
-  assert.match(planReminder({ ...base, dueDate: undefined }, NOW).reason, /due date/);
+  assert.match(planReminder({ ...base, dueDate: "garbage" }, NOW).reason, /unreadable due date/);
+});
+
+test("planReminder gives a reminder with no due date a date-only due date, even if allDay is false", () => {
+  for (const dueDate of [undefined, null, ""]) {
+    const p = planReminder({ ...base, dueDate, allDay: false, tags: ["after-14d"], completionDate: "2026-10-08T10:20:40.539748" }, NOW);
+    assert.equal(p.action, "reschedule");
+    assert.equal(p.due, "2026-10-22");
+    assert.equal(p.allDay, true);
+  }
 });
 
 test("sameDue compares day for all-day and day+time for timed", () => {

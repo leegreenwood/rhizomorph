@@ -9,7 +9,7 @@ A reminder opts in with a tag `#after-<N><unit>` — unit `d`, `w`, `m` or `y` (
 1. `remctl export --json` → every reminder with its tags, recurrence and completion date.
 2. **Completed** tagged reminder → next due = completion date + interval, written to the *same* reminder (`edit -d`), then reopened (`undone`). List, notes, tags, sharing etc. are untouched. Timed reminders keep their time of day; all-day stay date-only. Month/year maths clamps to the last valid day.
 3. **Native recurrence on a tagged reminder is removed** (open or completed) — the tag owns the schedule, and a native rule would auto-advance the reminder before this check could see it completed.
-4. Skipped and logged, never modified: unparseable `after-*` tags (`after-0d`, `after-3x`…), more than one `after-*` tag, or no due date.
+4. Skipped and logged, never modified: unparseable `after-*` tags (`after-0d`, `after-3x`…), more than one `after-*` tag, or an unreadable due date. A reminder with **no** due date is rescheduled date-only (completion date + interval). A reminder skipped on consecutive runs for 2h+ triggers a Moshi push (once per reminder per day), so a stuck one can't go unnoticed; state is kept in `logs/skip-state.json`.
 5. If `completionDate` is unreadable the run time is used and `completion_date_unreadable` is logged.
 6. Never deletes anything. Every write is re-read with `remctl info` and checked; a failure is logged and pushed via Moshi (exit code 1).
 

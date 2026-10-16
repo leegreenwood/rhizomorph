@@ -68,7 +68,8 @@ export function nextDue({ completion, dueTime, allDay, n, unit }) {
  * Returns { action: 'ignore' } for untagged reminders, otherwise one of:
  *   { action: 'skip', reason }
  *   { action: 'strip-recurrence' }            open tagged reminder still carrying a native recurrence
- *   { action: 'reschedule', due, stripRecurrence, completionSource, interval }
+ *   { action: 'reschedule', due, allDay, stripRecurrence, completionSource, interval }
+ * A reminder with no due date at all is rescheduled date-only (completion date + interval).
  */
 export function planReminder(r, now) {
   const { parsed, invalid } = classifyTags(r.tags);
@@ -78,8 +79,10 @@ export function planReminder(r, now) {
   const hasRecurrence = Boolean(r.recurrence);
   if (!r.completed) return hasRecurrence ? { action: "strip-recurrence" } : { action: "ignore" };
 
-  const due = parseLocal(r.dueDate);
-  if (!due) return { action: "skip", reason: "no readable due date to base the reschedule on" };
+  const hasDue = r.dueDate != null && r.dueDate !== "";
+  const due = hasDue ? parseLocal(r.dueDate) : null;
+  if (hasDue && !due) return { action: "skip", reason: `unreadable due date: ${r.dueDate}` };
+  const allDay = due ? Boolean(r.allDay) : true; // RemCTL's allDay flag is meaningless without a due date
   let completion = parseLocal(r.completionDate);
   let completionSource = "remctl";
   if (!completion) {
@@ -89,7 +92,8 @@ export function planReminder(r, now) {
   const { n, unit, tag } = parsed[0];
   return {
     action: "reschedule",
-    due: nextDue({ completion, dueTime: due, allDay: Boolean(r.allDay), n, unit }),
+    due: nextDue({ completion, dueTime: due, allDay, n, unit }),
+    allDay,
     stripRecurrence: hasRecurrence,
     completionSource,
     interval: tag,

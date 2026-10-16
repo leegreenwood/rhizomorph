@@ -6,7 +6,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -61,6 +61,35 @@ async function notifyMoshi({ title, message }) {
   }
 }
 
+const STATE_FILE = process.env.STATE_FILE || join(HERE, "logs", "skip-state.json");
+const STUCK_AFTER_MS = 2 * 3600_000; // skipped on at least two hourly runs before it counts as stuck
+const REALERT_MS = 24 * 3600_000;
+
+function loadState() {
+  try { return JSON.parse(readFileSync(STATE_FILE, "utf8")); } catch { return {}; }
+}
+
+/** Pushes one alert per reminder per day for reminders skipped run after run; forgets ones that recovered. */
+async function alertStuckSkips(skipped) {
+  const state = loadState();
+  const next = {};
+  const nowMs = Date.now();
+  const stuck = [];
+  for (const { r, reason } of skipped) {
+    const prev = state[r.id]?.reason === reason ? state[r.id] : { reason, since: nowMs };
+    if (nowMs - prev.since >= STUCK_AFTER_MS && (!prev.alertedAt || nowMs - prev.alertedAt >= REALERT_MS)) {
+      stuck.push(`${r.title} (${reason})`);
+      prev.alertedAt = nowMs;
+    }
+    next[r.id] = prev;
+  }
+  writeFileSync(STATE_FILE, JSON.stringify(next, null, 2));
+  if (stuck.length) {
+    log("stuck_alert", { reminders: stuck });
+    await notifyMoshi({ title: "🟠 Reminders repeat check: reminders stuck", message: `Skipped and untouched: ${stuck.slice(0, 3).join(" | ")}` });
+  }
+}
+
 const label = (r) => ({ id: r.id, title: r.title, list: r.list });
 
 /** Re-reads one reminder and throws unless `check` passes — every write is confirmed, never assumed. */
@@ -83,10 +112,10 @@ async function stripRecurrence(r) {
 async function reschedule(r, plan) {
   if (plan.stripRecurrence) await stripRecurrence(r);
   await remctl(["edit", String(r.id), "-d", plan.due, "--json"]);
-  await confirm(r.id, "setting due date", (f) => sameDue(f.dueDate, plan.due, r.allDay));
+  await confirm(r.id, "setting due date", (f) => sameDue(f.dueDate, plan.due, plan.allDay));
   const res = await remctl(["undone", String(r.id), "--json"]);
   if (res?.results?.failed?.length || res?.results?.uncertain?.length) log("undone_not_clean", { ...label(r), result: res });
-  await confirm(r.id, "reopening", (f) => f.completed === false && sameDue(f.dueDate, plan.due, r.allDay));
+  await confirm(r.id, "reopening", (f) => f.completed === false && sameDue(f.dueDate, plan.due, plan.allDay));
 }
 
 async function main() {
@@ -95,6 +124,7 @@ async function main() {
   const reminders = ONLY_ID ? all.filter((r) => r.id === ONLY_ID) : all;
   const counts = { exported: all.length, tagged: 0, completed_tagged: 0, rescheduled: 0, recurrence_stripped: 0, skipped: 0, failed: 0 };
   const failures = [];
+  const skipped = [];
 
   for (const r of reminders) {
     const plan = planReminder(r, now);
@@ -104,6 +134,7 @@ async function main() {
 
     if (plan.action === "skip") {
       counts.skipped++;
+      skipped.push({ r, reason: plan.reason });
       log("skipped", { ...label(r), reason: plan.reason });
       continue;
     }
@@ -122,7 +153,7 @@ async function main() {
     }
 
     if (plan.completionSource === "run-time-fallback") log("completion_date_unreadable", { ...label(r), using: now.toISOString() });
-    const change = { ...label(r), interval: plan.interval, old_due: r.dueDate, new_due: plan.due, all_day: Boolean(r.allDay), completed_at: r.completionDate ?? null, strip_recurrence: plan.stripRecurrence };
+    const change = { ...label(r), interval: plan.interval, old_due: r.dueDate, new_due: plan.due, all_day: plan.allDay, completed_at: r.completionDate ?? null, strip_recurrence: plan.stripRecurrence };
     if (DRY_RUN) { log("would_reschedule", change); counts.rescheduled++; continue; }
     try {
       await reschedule(r, plan);
@@ -135,6 +166,7 @@ async function main() {
     }
   }
 
+  if (!DRY_RUN && !ONLY_ID) await alertStuckSkips(skipped);
   log("run_summary", counts);
   if (failures.length) {
     await notifyMoshi({ title: "🔴 Reminders repeat check failed", message: `${failures.length} reminder(s) failed: ${failures.slice(0, 3).join(" | ")}` });
