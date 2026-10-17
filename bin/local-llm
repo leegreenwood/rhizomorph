@@ -35,6 +35,8 @@ usage() { sed -n '/^# Usage:/,/^# Every/p' "$0" | sed '$d; s/^# \{0,1\}//' >&2; 
 while getopts "f:s:t:rh" opt; do
   case "$opt" in
     f) [ -r "$OPTARG" ] || { echo "local-llm: cannot read $OPTARG" >&2; exit 2; }
+       # An empty context file makes the model invent plausible content instead of saying so.
+       [ -s "$OPTARG" ] || { echo "local-llm: $OPTARG is empty" >&2; exit 2; }
        FILES+=("$OPTARG") ;;
     s) SYSTEM="$OPTARG" ;;
     t) MAX_TOKENS="$OPTARG" ;;
@@ -44,10 +46,18 @@ while getopts "f:s:t:rh" opt; do
 done
 shift $((OPTIND - 1))
 
+# Piped or redirected stdin is read whenever present: with a PROMPT argument it becomes
+# context (`git diff | local-llm "Write a commit message"`), otherwise it is the prompt.
+STDIN=""
+if [ -p /dev/stdin ] || [ -f /dev/stdin ]; then
+  STDIN="$(cat)"
+fi
+
 if [ $# -gt 0 ]; then
   PROMPT="$*"
-elif [ ! -t 0 ]; then
-  PROMPT="$(cat)"
+elif [ -n "$STDIN" ]; then
+  PROMPT="$STDIN"
+  STDIN=""
 else
   usage
 fi
@@ -62,6 +72,9 @@ CONTEXT=""
 for f in "${FILES[@]+"${FILES[@]}"}"; do
   CONTEXT+="File: $f"$'\n```\n'"$(cat "$f")"$'\n```\n\n'
 done
+if [ -n "$STDIN" ]; then
+  CONTEXT+="Input:"$'\n```\n'"$STDIN"$'\n```\n\n'
+fi
 
 # jq builds the JSON so prompt and file text are never interpolated into shell or JSON.
 PAYLOAD=$(jq -n \
