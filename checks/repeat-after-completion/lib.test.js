@@ -82,30 +82,41 @@ test("nextDue is unaffected by DST changeover dates", () => {
   assert.equal(out, "2026-03-29 01:30"); // UK clocks skip 01:00-02:00 that day; we emit wall-clock text only
 });
 
-import { planReminder, sameDue } from "./lib.js";
+import { planReminder, sameDue, isReached } from "./lib.js";
 
-const NOW = new Date(2026, 9, 4, 13, 0);
+const NOW = new Date(2026, 10, 2, 13, 0); // 2 Nov 2026: the after-1m reminder below returns today
 const base = { id: 1, title: "t", completed: true, allDay: true, dueDate: "2026-10-01T00:00:00", completionDate: "2026-10-02T06:48:41.469695", tags: ["after-1m"] };
 
-test("planReminder ignores untagged and open untagged-recurrence reminders", () => {
+test("planReminder ignores untagged and open tagged reminders without recurrence", () => {
   assert.equal(planReminder({ ...base, tags: undefined }, NOW).action, "ignore");
   assert.equal(planReminder({ ...base, tags: ["work"] }, NOW).action, "ignore");
   assert.equal(planReminder({ ...base, completed: false }, NOW).action, "ignore");
 });
 
-test("planReminder reschedules a completed tagged reminder from its completion date", () => {
-  assert.deepEqual(planReminder(base, NOW), { action: "reschedule", due: "2026-11-02", allDay: true, stripRecurrence: false, completionSource: "remctl", interval: "after-1m" });
+test("planReminder reopens a completed reminder once completion + interval arrives, clearing its stale due date", () => {
+  assert.deepEqual(planReminder(base, NOW), { action: "reopen", returnsOn: "2026-11-02", clearDue: true, stripRecurrence: false, completionSource: "remctl", interval: "after-1m" });
 });
 
-test("planReminder keeps timed reminders timed", () => {
-  const p = planReminder({ ...base, allDay: false, dueDate: "2026-10-01T09:00:00" }, NOW);
-  assert.equal(p.due, "2026-11-02 09:00");
+test("planReminder does not ask to clear a due date that is not there", () => {
+  for (const dueDate of [undefined, null, ""]) assert.equal(planReminder({ ...base, dueDate }, NOW).clearDue, false);
 });
 
-test("planReminder falls back to run time when completion date is unreadable", () => {
+test("planReminder waits, writing nothing, until the return day starts", () => {
+  assert.deepEqual(planReminder(base, new Date(2026, 10, 1, 23, 59)), { action: "wait", returnsOn: "2026-11-02", interval: "after-1m" });
+  assert.equal(planReminder(base, new Date(2026, 10, 2, 0, 0)).action, "reopen");
+  assert.equal(planReminder(base, new Date(2027, 0, 1)).action, "reopen"); // late runs still catch up
+});
+
+test("planReminder counts from the completion date, not the old due date or time of day", () => {
+  const p = planReminder({ ...base, allDay: false, dueDate: "2020-01-01T09:00:00", completionDate: "2026-10-02T23:59:00", tags: ["after-14d"] }, new Date(2026, 9, 16));
+  assert.equal(p.action, "reopen");
+  assert.equal(p.returnsOn, "2026-10-16");
+});
+
+test("planReminder reopens immediately when the completion date is unreadable", () => {
   const p = planReminder({ ...base, completionDate: undefined }, NOW);
+  assert.equal(p.action, "reopen");
   assert.equal(p.completionSource, "run-time-fallback");
-  assert.equal(p.due, "2026-11-04");
 });
 
 test("planReminder strips native recurrence on completed and open tagged reminders", () => {
@@ -114,20 +125,16 @@ test("planReminder strips native recurrence on completed and open tagged reminde
   assert.equal(planReminder({ ...base, completed: false, recurrence: rec }, NOW).action, "strip-recurrence");
 });
 
-test("planReminder skips unparseable, ambiguous and due-less reminders without scheduling", () => {
+test("planReminder skips unparseable and ambiguous tags without touching the reminder", () => {
   assert.match(planReminder({ ...base, tags: ["after-3x"] }, NOW).reason, /unparseable/);
   assert.match(planReminder({ ...base, tags: ["after-1d", "after-2d"] }, NOW).reason, /multiple/);
   assert.match(planReminder({ ...base, tags: ["after-1d", "after-bad"] }, NOW).reason, /unparseable/);
-  assert.match(planReminder({ ...base, dueDate: "garbage" }, NOW).reason, /unreadable due date/);
 });
 
-test("planReminder gives a reminder with no due date a date-only due date, even if allDay is false", () => {
-  for (const dueDate of [undefined, null, ""]) {
-    const p = planReminder({ ...base, dueDate, allDay: false, tags: ["after-14d"], completionDate: "2026-10-08T10:20:40.539748" }, NOW);
-    assert.equal(p.action, "reschedule");
-    assert.equal(p.due, "2026-10-22");
-    assert.equal(p.allDay, true);
-  }
+test("isReached compares the day for all-day and the minute for timed", () => {
+  assert.equal(isReached("2026-11-02", true, new Date(2026, 10, 2, 0, 0)), true);
+  assert.equal(isReached("2026-11-02", true, new Date(2026, 10, 1, 23, 59)), false);
+  assert.equal(isReached("2026-11-02 09:00", false, new Date(2026, 10, 2, 8, 59)), false);
 });
 
 test("sameDue compares day for all-day and day+time for timed", () => {

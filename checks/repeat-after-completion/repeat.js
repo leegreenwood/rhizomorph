@@ -10,7 +10,7 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { planReminder, sameDue } from "./lib.js";
+import { planReminder } from "./lib.js";
 
 const run = promisify(execFile);
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -105,24 +105,27 @@ async function stripRecurrence(r) {
 }
 
 /**
- * Write order matters for interruption safety: set the new due date while the reminder is still
+ * Write order matters for interruption safety: clear any stale due date while the reminder is still
  * completed, and only then reopen it. A crash in between leaves it completed with an unchanged
- * completion date, so the next run recomputes the identical due date and finishes the job.
+ * completion date, so the next run reaches the same decision and finishes the job.
+ * The reopened reminder carries no due date — its reappearance is the signal.
  */
-async function reschedule(r, plan) {
+async function reopen(r, plan) {
   if (plan.stripRecurrence) await stripRecurrence(r);
-  await remctl(["edit", String(r.id), "-d", plan.due, "--json"]);
-  await confirm(r.id, "setting due date", (f) => sameDue(f.dueDate, plan.due, plan.allDay));
+  if (plan.clearDue) {
+    await remctl(["edit", String(r.id), "-d", "clear", "--json"]);
+    await confirm(r.id, "clearing due date", (f) => !f.dueDate);
+  }
   const res = await remctl(["undone", String(r.id), "--json"]);
   if (res?.results?.failed?.length || res?.results?.uncertain?.length) log("undone_not_clean", { ...label(r), result: res });
-  await confirm(r.id, "reopening", (f) => f.completed === false && sameDue(f.dueDate, plan.due, plan.allDay));
+  await confirm(r.id, "reopening", (f) => f.completed === false && !f.dueDate);
 }
 
 async function main() {
   const now = new Date();
   const all = await remctl(["export", "--json"]);
   const reminders = ONLY_ID ? all.filter((r) => r.id === ONLY_ID) : all;
-  const counts = { exported: all.length, tagged: 0, completed_tagged: 0, rescheduled: 0, recurrence_stripped: 0, skipped: 0, failed: 0 };
+  const counts = { exported: all.length, tagged: 0, completed_tagged: 0, reopened: 0, waiting: 0, recurrence_stripped: 0, skipped: 0, failed: 0 };
   const failures = [];
   const skipped = [];
 
@@ -136,6 +139,11 @@ async function main() {
       counts.skipped++;
       skipped.push({ r, reason: plan.reason });
       log("skipped", { ...label(r), reason: plan.reason });
+      continue;
+    }
+    if (plan.action === "wait") {
+      counts.waiting++;
+      if (DRY_RUN) log("would_wait", { ...label(r), interval: plan.interval, returns_on: plan.returnsOn });
       continue;
     }
     if (plan.action === "strip-recurrence") {
@@ -152,17 +160,17 @@ async function main() {
       continue;
     }
 
-    if (plan.completionSource === "run-time-fallback") log("completion_date_unreadable", { ...label(r), using: now.toISOString() });
-    const change = { ...label(r), interval: plan.interval, old_due: r.dueDate, new_due: plan.due, all_day: plan.allDay, completed_at: r.completionDate ?? null, strip_recurrence: plan.stripRecurrence };
-    if (DRY_RUN) { log("would_reschedule", change); counts.rescheduled++; continue; }
+    if (plan.completionSource === "run-time-fallback") log("completion_date_unreadable", { ...label(r), action: "reopening now" });
+    const change = { ...label(r), interval: plan.interval, returns_on: plan.returnsOn, completed_at: r.completionDate ?? null, clear_due: plan.clearDue, strip_recurrence: plan.stripRecurrence };
+    if (DRY_RUN) { log("would_reopen", change); counts.reopened++; continue; }
     try {
-      await reschedule(r, plan);
-      counts.rescheduled++;
-      log("rescheduled", change);
+      await reopen(r, plan);
+      counts.reopened++;
+      log("reopened", change);
     } catch (err) {
       counts.failed++;
       failures.push(`${r.title}: ${err.message}`);
-      log("failed", { ...change, step: "reschedule", error: err.message });
+      log("failed", { ...change, step: "reopen", error: err.message });
     }
   }
 

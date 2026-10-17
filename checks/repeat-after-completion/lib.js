@@ -64,12 +64,15 @@ export function nextDue({ completion, dueTime, allDay, n, unit }) {
 }
 
 /**
- * Decides what to do with one exported reminder.
- * Returns { action: 'ignore' } for untagged reminders, otherwise one of:
+ * Decides what to do with one exported reminder. Returns { action: 'ignore' } for untagged
+ * reminders, otherwise one of:
  *   { action: 'skip', reason }
- *   { action: 'strip-recurrence' }            open tagged reminder still carrying a native recurrence
- *   { action: 'reschedule', due, allDay, stripRecurrence, completionSource, interval }
- * A reminder with no due date at all is rescheduled date-only (completion date + interval).
+ *   { action: 'strip-recurrence' }   open tagged reminder still carrying a native recurrence
+ *   { action: 'wait', returnsOn, interval }   completed, return day not reached — leave untouched
+ *   { action: 'reopen', returnsOn, clearDue, stripRecurrence, completionSource, interval }
+ *
+ * Defer semantics: a completed reminder stays hidden until completion date + interval, then is
+ * reopened with NO due date (any stale one is cleared so it doesn't return overdue).
  */
 export function planReminder(r, now) {
   const { parsed, invalid } = classifyTags(r.tags);
@@ -79,23 +82,18 @@ export function planReminder(r, now) {
   const hasRecurrence = Boolean(r.recurrence);
   if (!r.completed) return hasRecurrence ? { action: "strip-recurrence" } : { action: "ignore" };
 
-  const hasDue = r.dueDate != null && r.dueDate !== "";
-  const due = hasDue ? parseLocal(r.dueDate) : null;
-  if (hasDue && !due) return { action: "skip", reason: `unreadable due date: ${r.dueDate}` };
-  const allDay = due ? Boolean(r.allDay) : true; // RemCTL's allDay flag is meaningless without a due date
-  let completion = parseLocal(r.completionDate);
-  let completionSource = "remctl";
-  if (!completion) {
-    completion = { y: now.getFullYear(), mo: now.getMonth() + 1, d: now.getDate(), hh: now.getHours(), mm: now.getMinutes() };
-    completionSource = "run-time-fallback";
-  }
   const { n, unit, tag } = parsed[0];
+  const completion = parseLocal(r.completionDate);
+  const returnsOn = completion ? nextDue({ completion, allDay: true, n, unit }) : null;
+  // Without a stable completion date there is nothing to wait on (a run-time fallback would restart
+  // the wait on every run and defer forever), so that rare case reopens immediately.
+  if (returnsOn && !isReached(returnsOn, true, now)) return { action: "wait", returnsOn, interval: tag };
   return {
-    action: "reschedule",
-    due: nextDue({ completion, dueTime: due, allDay, n, unit }),
-    allDay,
+    action: "reopen",
+    returnsOn,
+    clearDue: r.dueDate != null && r.dueDate !== "",
     stripRecurrence: hasRecurrence,
-    completionSource,
+    completionSource: completion ? "remctl" : "run-time-fallback",
     interval: tag,
   };
 }
@@ -107,4 +105,11 @@ export function sameDue(dueDate, expected, allDay) {
   if (!a || !b) return false;
   const day = a.y === b.y && a.mo === b.mo && a.d === b.d;
   return allDay ? day : day && a.hh === b.hh && a.mm === b.mm;
+}
+
+/** True once the next due moment has arrived: the day for all-day reminders, the exact minute for timed ones. */
+export function isReached(dueText, allDay, now) {
+  const t = parseLocal(dueText);
+  const key = (y, mo, d, hh, mm) => (allDay ? [y, mo, d] : [y, mo, d, hh, mm]).reduce((acc, v) => acc * 100 + v, 0);
+  return key(now.getFullYear(), now.getMonth() + 1, now.getDate(), now.getHours(), now.getMinutes()) >= key(t.y, t.mo, t.d, t.hh, t.mm);
 }

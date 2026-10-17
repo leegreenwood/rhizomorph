@@ -7,13 +7,13 @@ Apple Reminders can't repeat "N days/weeks/months after the last one was complet
 A reminder opts in with a tag `#after-<N><unit>` — unit `d`, `w`, `m` or `y` (e.g. `#after-14d`, `#after-1m`). Each run:
 
 1. `remctl export --json` → every reminder with its tags, recurrence and completion date.
-2. **Completed** tagged reminder → next due = completion date + interval, written to the *same* reminder (`edit -d`), then reopened (`undone`). List, notes, tags, sharing etc. are untouched. Timed reminders keep their time of day; all-day stay date-only. Month/year maths clamps to the last valid day.
+2. **Completed** tagged reminder → it stays completed (hidden from your lists, like an OmniFocus defer date) until the start of the day that is completion date + interval. Then it is reopened **in place** with **no due date** — its reappearing is the signal. Any old due date is cleared first (while still completed) so it doesn't come back overdue. List, notes, tags, sharing etc. are untouched. A late run still catches up. Dry runs show the wait as `would_wait` with `returns_on`.
 3. **Native recurrence on a tagged reminder is removed** (open or completed) — the tag owns the schedule, and a native rule would auto-advance the reminder before this check could see it completed.
-4. Skipped and logged, never modified: unparseable `after-*` tags (`after-0d`, `after-3x`…), more than one `after-*` tag, or an unreadable due date. A reminder with **no** due date is rescheduled date-only (completion date + interval). A reminder skipped on consecutive runs for 2h+ triggers a Moshi push (once per reminder per day), so a stuck one can't go unnoticed; state is kept in `logs/skip-state.json`.
-5. If `completionDate` is unreadable the run time is used and `completion_date_unreadable` is logged.
+4. Skipped and logged, never modified: unparseable `after-*` tags (`after-0d`, `after-3x`…), more than one `after-*` tag, (due dates are not needed, so their absence is fine). A reminder skipped on consecutive runs for 2h+ triggers a Moshi push (once per reminder per day), so a stuck one can't go unnoticed; state is kept in `logs/skip-state.json`.
+5. If `completionDate` is unreadable the run time is used and `completion_date_unreadable` is logged; with no stable date to wait on, that rare case reopens straight away.
 6. Never deletes anything. Every write is re-read with `remctl info` and checked; a failure is logged and pushed via Moshi (exit code 1).
 
-**Idempotent:** reopening makes the reminder non-completed, so it is not picked up again. Writes are ordered *due date first, then reopen*: if a run dies between them the reminder is still completed with the same completion date, so the next run computes the same date and finishes.
+**Idempotent:** waiting writes nothing, and reopening makes the reminder non-completed, so it is not picked up again. Writes are ordered *clear due date first, then reopen*: if a run dies between them the reminder is still completed with the same completion date, so the next run reaches the same decision and finishes.
 
 ## Usage
 
