@@ -17,16 +17,17 @@ npm start                  # run in foreground (node server.js)
 ```
 No test suite, linter, or build step exists in this repo yet.
 
-To restart a live receiver process (each runs as a plain background process inside this workspace, not a system service — see "launchd" below). Launch with the **absolute** path to `server.js`, not a relative one — otherwise the process's argv is just `server.js` with no path, which won't match the `pgrep -f` patterns in the gotcha below:
+Each receiver runs as a launchd LaunchAgent (`com.rhizomorph.receiver-<netlify|github>`, plist beside its `server.js`; started at login, restarted if it dies, logs to `logs/out.log`). The process is launched with the **absolute** path to `server.js`, so `pgrep -fl "receivers/<name>/server.js"` still matches. After editing a plist, copy it to `~/Library/LaunchAgents/` and `launchctl bootout` + `bootstrap` it.
 ```
-cd receivers/<netlify|github>
-set -a && source .env && set +a
-nohup node "$(pwd)/server.js" >> logs/out.log 2>&1 &
+launchctl kickstart -k gui/$(id -u)/com.rhizomorph.receiver-github   # restart (use -netlify for the other)
+launchctl print gui/$(id -u)/com.rhizomorph.receiver-github | grep -E "state|pid|runs|last exit"
 ```
+
+The Herdr "Rhizomorph" workspace (live status board + merged log tail) is built by `bin/rhizomorph-workspace` (idempotent; re-run after a Herdr/Mac restart). The board itself is `bin/rhizomorph-status` (read-only).
 
 ## Architecture
 
-Each signal source lives under `receivers/<source>/` as an independent, self-contained Node service (own `package.json`, own `.env`). Two exist: `receivers/netlify/` and `receivers/github/`.
+Each signal source lives under `receivers/<source>/` as an independent, self-contained Node service (own `package.json`, own `.env`, own LaunchAgent plist). Two exist: `receivers/netlify/` and `receivers/github/`.
 
 **`receivers/netlify/server.js`** — Express app, one route (`POST /netlify/webhook`):
 1. Verifies Netlify's `X-Webhook-Signature` header as a JWS (HS256, issuer `netlify`, `sha256` claim checked against a SHA-256 of the raw request body) against `NETLIFY_WEBHOOK_SECRET`. Rejects with 403 on any failure — the endpoint is public via Tailscale Funnel, so this check is load-bearing, not decorative.
@@ -58,6 +59,6 @@ Exposure: Tailscale Funnel path-routes `/netlify/webhook` and `/github/webhook` 
 
 ## Known environment gotchas (this Mac specifically)
 
-- **launchd cannot spawn from `/Volumes/Flexdrive`.** A LaunchAgent pointed at this repo fails immediately (`EX_CONFIG`, no logs ever written) even though the same code runs fine interactively. This is why receivers run as `nohup`'d background processes inside the Herdr session instead of `brew services`/launchd-managed daemons. Don't reach for launchd for future receivers on this repo without expecting the same failure.
+- **launchd cannot spawn from `/Volumes/Flexdrive`.** A LaunchAgent pointed at a path on that volume fails immediately (`EX_CONFIG`, no logs ever written) even though the same code runs fine interactively. This repo now lives on the internal disk (`~/Code/rhizomorph`), which is why the receivers and checks can use launchd. If it is ever moved back onto Flexdrive, expect every agent here to stop spawning.
 - **Multiple unrelated services are literally named `server.js`** (Hyphae's MCP HTTP proxy is one, and now two receivers in this repo). Never `pkill`/`kill` by the bare pattern `"node server.js"` — it will hit unrelated processes too. Target by full path instead: `pgrep -fl "receivers/netlify/server.js"` or `pgrep -fl "receivers/github/server.js"`.
 - **`tailscale funnel --set-path=/foo` needs the path repeated in the proxy target, or it silently 404s.** `tailscale funnel --bg --set-path=/github/webhook 127.0.0.1:8789` creates a route that strips the path before proxying — requests to the public URL 404 even though the local server is fine. The fix is to include the full path in the target too: `tailscale funnel --bg --set-path=/github/webhook http://127.0.0.1:8789/github/webhook`. `tailscale serve status --json` shows the actual `Proxy` value per handler if a route seems to be dropping requests — compare it against a known-working one.

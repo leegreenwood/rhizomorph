@@ -27,26 +27,30 @@ This is enforced structurally, not just by convention:
 
 [`receivers/netlify/`](receivers/netlify/) is a small Express receiver that verifies Netlify's JWS-signed deploy webhook, then posts a Moshi push: quiet confirmation on `deploy_succeeded`, alert with the error detail on `deploy_failed`. It never mutates anything — pure notify, consistent with the no-autonomous-actions principle (there's nothing to approve here).
 
-- **Runs**: as a plain background Node process inside this Herdr workspace (started with `nohup`, not a system service — see [Why not launchd](#why-not-launchd) below), listening on `127.0.0.1:8788`.
+- **Runs**: as a launchd LaunchAgent (`com.rhizomorph.receiver-netlify`, see [Process supervision](#process-supervision)), listening on `127.0.0.1:8788`.
 - **Exposed at**: `https://lees-mac-studio.taile2c8d3.ts.net/netlify/webhook` via `tailscale funnel --set-path=/netlify/webhook`, alongside Hyphae's existing `/mcp` path on the same hostname.
 - **Config**: `receivers/netlify/.env` (gitignored) needs `PORT`, `NETLIFY_WEBHOOK_SECRET` (the JWS secret, also pasted into each site's Netlify notification config), and `MOSHI_WEBHOOK_TOKEN`.
 - **Wired up sites**: iyvs, zanshinarchery, greenwoodbushcraft, ownpaceoutfitters (added manually via each site's *Project configuration → Notifications → Deploy notifications*, since the Netlify API's `createHookBySiteId` rejected every payload shape tried with an unhelpful 422 — the dashboard path was faster and is the officially documented method anyway).
-- **To restart**: from within the Rhizomorph workspace, `cd receivers/netlify && set -a && source .env && set +a && nohup node "$(pwd)/server.js" >> logs/out.log 2>&1 &` — see the process-naming gotcha below first.
+- **To restart**: `launchctl kickstart -k gui/$(id -u)/com.rhizomorph.receiver-netlify`.
 
 ### 2. GitHub Actions run notifications — live
 
 [`receivers/github/`](receivers/github/) is a small Express receiver that verifies GitHub's HMAC-signed webhook, then posts a Moshi push on Actions `workflow_run` completion: success or failure, including a link straight to the run's logs. Built specifically to cover deploys that go through GitHub Actions to Azure rather than through Netlify — same blind spot the Netlify receiver doesn't see. Notify-only, same as Netlify — nothing here mutates anything.
 
-- **Runs**: as a plain background Node process inside this Herdr workspace (`nohup`, not a system service — see [Why not launchd](#why-not-launchd)), listening on `127.0.0.1:8789`.
+- **Runs**: as a launchd LaunchAgent (`com.rhizomorph.receiver-github`, see [Process supervision](#process-supervision)), listening on `127.0.0.1:8789`.
 - **Exposed at**: `https://lees-mac-studio.taile2c8d3.ts.net/github/webhook` via `tailscale funnel --set-path=/github/webhook`, alongside `/netlify/webhook` and Hyphae's `/mcp` on the same hostname.
 - **Config**: `receivers/github/.env` (gitignored) needs `PORT`, `GITHUB_WEBHOOK_SECRET` (shared HMAC secret, also pasted into each repo's GitHub webhook config), and `MOSHI_WEBHOOK_TOKEN`.
 - **Wired up repos**: `attested` (the actual motivating case — deploys to Azure Container Apps + Azure Static Web Apps via `deploy.yml`/`deploy-website.yml`, neither visible to Netlify), plus iyvs, zanshinarchery, greenwoodbushcraft, ownpaceoutfitters (same four as the Netlify sites, added for consistency). All added via `gh api repos/{owner}/{repo}/hooks`, events restricted to `workflow_run` only. Ping delivery confirmed 200 on all five; success/failure notification logic verified against `attested` with signed simulated payloads (a real end-to-end test would require an actual push-triggered Azure deploy, which wasn't done just to test notifications).
 - **Known limitation**: Moshi's webhook API rate-limits at 10 notifications/minute on the free tier (`429` on excess) — confirmed by hitting it during testing. The receiver doesn't retry on a dropped push, so a burst of failures in the same minute could mean a later one silently doesn't page.
-- **To restart**: from within the Rhizomorph workspace, `cd receivers/github && set -a && source .env && set +a && nohup node "$(pwd)/server.js" >> logs/out.log 2>&1 &` — see the process-naming gotcha below first.
+- **To restart**: `launchctl kickstart -k gui/$(id -u)/com.rhizomorph.receiver-github`.
 
-#### Why not launchd
+#### Process supervision
 
-A `launchd` LaunchAgent pointed at anything under `/Volumes/Flexdrive` fails to spawn at all (`EX_CONFIG`, no logs ever written) — confirmed the identical plist works instantly from `/tmp`. Rather than deploy a separate local-disk copy, each receiver runs inside this persistent Herdr session instead, matching the project's own preference for keeping everything in one coherent agent identity (see Scheduling approach below).
+Both receivers (and the [repeat-after-completion check](checks/repeat-after-completion/)) run as per-user **launchd LaunchAgents**: started at login, restarted within ~10s if they crash or are killed (`KeepAlive`), stdout/stderr appended to each receiver's `logs/out.log`. They previously ran as `nohup` processes inside the Herdr session, which silently died on every reboot — launchd was ruled out then because it cannot spawn from `/Volumes/Flexdrive` (`EX_CONFIG`, no logs). The repo now lives on the internal disk, so that limit no longer applies; if it moves back to Flexdrive, every agent here will stop spawning. Plists live beside each `server.js` and are copied into `~/Library/LaunchAgents/`.
+
+#### Herdr window
+
+`bin/rhizomorph-workspace` creates (idempotently) a Herdr workspace named "Rhizomorph": left pane `bin/rhizomorph-status` (LaunchAgent state, listeners, Funnel routes, last check run, last webhook events), right pane a merged `tail -F` of the receiver and check logs. Re-run it after a Mac or Herdr restart.
 
 #### Process-naming gotcha
 
@@ -54,7 +58,7 @@ More than one unrelated Node service on this Mac is literally named `server.js` 
 
 ### 3. Reminders repeat-after-completion — scheduled check
 
-[`checks/repeat-after-completion/`](checks/repeat-after-completion/) gives Apple Reminders "repeat N days/weeks/months after completion" via `#after-<N><d|w|m|y>` tags, using the RemCTL CLI. Hourly via a per-user **launchd** LaunchAgent (a deliberate exception to the `/schedule` preference below: it is a deterministic script that must run whether or not the Herdr session is up, and this repo sits on local disk so the Flexdrive launchd problem doesn't apply). Mutates only Reminders the user has opted in with a tag, never deletes, so it isn't approval-gated; failures push through the same Moshi webhook as the receivers. Details, flags and install steps in its README.
+[`checks/repeat-after-completion/`](checks/repeat-after-completion/) gives Apple Reminders "repeat N days/weeks/months after completion" via `#after-<N><d|w|m|y>` tags, using the RemCTL CLI. Hourly (and at login) via a per-user **launchd** LaunchAgent, like the receivers: it is a deterministic script that must run whether or not the Herdr session is up. Mutates only Reminders the user has opted in with a tag, never deletes, so it isn't approval-gated; failures push through the same Moshi webhook as the receivers. Details, flags and install steps in its README.
 
 ### 4. Board labels — scheduled check
 
@@ -72,7 +76,7 @@ Was floated as a candidate signal source; confirmed **not** a planned feature. T
 
 ## Scheduling approach
 
-Favoring **in-session `/schedule`** over headless `claude -p` + cron/launchd: since the Herdr session is meant to stay up long-term anyway, session-scoped routines survive as long as Rhizomorph does, and everything — webhook handling and scheduled checks — lives in one coherent agent identity rather than being split across a separate cron script. (No routines registered yet — the Netlify receiver above is a standalone process, not a `/schedule` routine.)
+Deterministic scripts and the webhook receivers run under **launchd** (see [Process supervision](#process-supervision)), so they survive reboots and don't depend on the Herdr session being alive. In-session `/schedule` routines remain the choice for checks that need the agent's judgement rather than a fixed script. (No `/schedule` routines registered yet.)
 
 ## Open questions / next steps
 
