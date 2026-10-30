@@ -10,7 +10,7 @@
   </array>
   <key>WorkingDirectory</key><string>/Users/leegreenwood/Code/rhizomorph/checks/repeat-after-completion</string>
   <key>StartInterval</key><integer>3600</integer>
-  <key>RunAtLoad</key><false/>
+  <key>RunAtLoad</key><true/>
   <key>ProcessType</key><string>Background</string>
   <key>EnvironmentVariables</key>
   <dict>
