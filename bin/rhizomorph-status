@@ -1,0 +1,37 @@
+#!/bin/zsh
+# Live status board for the Rhizomorph Herdr pane. Read-only; refreshes every 5s. Ctrl-C to exit.
+ROOT="${0:A:h:h}"
+TS=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+UIDN=$(id -u)
+
+agent() { # label -> one line from launchctl
+  local out state pid runs last
+  out=$(launchctl print "gui/$UIDN/$1" 2>/dev/null) || { printf '  %-44s NOT LOADED\n' "$1"; return; }
+  state=$(print -r -- "$out" | awk -F' = ' '/^\tstate =/{print $2; exit}')
+  pid=$(print -r -- "$out" | awk -F' = ' '/^\tpid =/{print $2; exit}')
+  runs=$(print -r -- "$out" | awk -F' = ' '/^\truns =/{print $2; exit}')
+  last=$(print -r -- "$out" | awk -F' = ' '/last exit code/{print $2; exit}')
+  printf '  %-44s %-12s pid=%-6s runs=%-4s last_exit=%s\n' "$1" "${state:-?}" "${pid:--}" "${runs:-?}" "${last:--}"
+}
+
+while true; do
+  clear
+  print -P "%B== Rhizomorph  $(date '+%a %d %b %H:%M:%S') ==%b   up: $(uptime | sed -E 's/.*up +([^,]*),.*/\1/')"
+  print "\nLaunchAgents"
+  agent com.rhizomorph.receiver-netlify
+  agent com.rhizomorph.receiver-github
+  agent com.rhizomorph.repeat-after-completion
+  print "\nListeners / Funnel"
+  for p in 8788 8789; do
+    lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1 && print "  :$p listening" || print "  :$p NOT LISTENING"
+  done
+  "$TS" funnel status 2>/dev/null | grep -E '^\|--' | sed 's/^/  /'
+  print "\nReminders repeat check (last run)"
+  grep '"run_summary"' "$ROOT/checks/repeat-after-completion/logs/repeat-after-completion.log" 2>/dev/null | tail -1 \
+    | python3 -c 'import sys,json
+for l in sys.stdin:
+    d=json.loads(l); print("  %s  tagged=%s reopened=%s waiting=%s skipped=%s failed=%s"%(d["ts"][:16].replace("T"," ")+"Z",d["tagged"],d["reopened"],d["waiting"],d["skipped"],d["failed"]))' || print "  no runs yet"
+  print "\nLast webhook events"
+  for s in netlify github; do print "  $s: $(grep -E '^20' "$ROOT/receivers/$s/logs/out.log" 2>/dev/null | tail -1 | cut -c1-100)"; done
+  sleep 5
+done

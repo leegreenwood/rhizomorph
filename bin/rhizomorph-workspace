@@ -1,0 +1,18 @@
+#!/bin/zsh
+# Create the "Rhizomorph" Herdr workspace if it isn't there: left = live status board, right = merged logs.
+# Idempotent — safe to run any time (e.g. after a reboot). Needs the Herdr server running.
+ROOT="${0:A:h:h}"
+LABEL=Rhizomorph
+
+if herdr workspace list | python3 -c 'import sys,json; sys.exit(0 if any(w["label"]==sys.argv[1] for w in json.load(sys.stdin)["result"]["workspaces"]) else 1)' "$LABEL"; then
+  echo "Workspace \"$LABEL\" already exists."; exit 0
+fi
+
+CREATED=$(herdr workspace create --cwd "$ROOT" --label "$LABEL" --no-focus)
+ROOT_PANE=$(print -r -- "$CREATED" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])')
+LOG_PANE=$(herdr pane split "$ROOT_PANE" --direction right --cwd "$ROOT" --no-focus \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
+
+herdr pane run "$ROOT_PANE" "$ROOT/bin/rhizomorph-status"
+herdr pane run "$LOG_PANE" "tail -n 20 -F $ROOT/receivers/netlify/logs/out.log $ROOT/receivers/github/logs/out.log $ROOT/checks/repeat-after-completion/logs/repeat-after-completion.log"
+echo "Created workspace \"$LABEL\" (status: $ROOT_PANE, logs: $LOG_PANE)."
