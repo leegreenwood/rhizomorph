@@ -66,6 +66,8 @@ Was floated as a candidate signal source; confirmed **not** a planned feature. T
 
 ## Local model helper
 
+> **Retired 2026-10-28.** Claude no longer uses this helper; small jobs go to Codex agents on LM Studio or Azure, run in Herdr panes (see `~/Code/talkterms/MULTI-MODEL.md` and the `codex-agent` skill). The script and the MLX scripts are kept for reference.
+
 [`bin/local-llm`](bin/local-llm) lets Claude hand small, self-contained jobs to the local MLX model (served by `raycast/mlx-start.sh`) while staying the coordinator: Claude runs it through Bash, gets the reply on stdout and reviews it. It works the same in VS Code, a terminal or a Herdr pane, local or over `herdr --remote`, and writes nothing, so it sits outside the approval gate. Watch it work with `tail -f ~/Library/Logs/local-llm.log`. A later step could run a full local coding agent in a sibling Herdr pane, driven with `herdr agent prompt`, once a larger model is available.
 
 ## Scheduling approach

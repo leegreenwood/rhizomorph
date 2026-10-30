@@ -52,6 +52,8 @@ Exposure: Tailscale Funnel path-routes `/netlify/webhook` and `/github/webhook` 
 
 ## Local model helper
 
+> **Retired 2026-10-28.** Claude no longer uses this helper; small jobs go to Codex agents on LM Studio or Azure, run in Herdr panes (see `~/Code/talkterms/MULTI-MODEL.md` and the `codex-agent` skill). The script and the MLX scripts are kept for reference.
+
 `bin/local-llm` sends a one-shot prompt (plus `-f FILE` context) to the local MLX server on `127.0.0.1:8080` and prints the reply — use it to hand off small, self-contained jobs (boilerplate drafts, file summaries, test-case lists) instead of doing them yourself, then review the reply before using it. It only reads and prints, so it needs no approval; anything written from its output goes through the normal prompts. Thinking is off by default (`-r` turns it on; raise `-t` with it). If it reports no server, start one with `raycast/mlx-start.sh`. Every call is logged to `~/Library/Logs/local-llm.log`.
 
 ## Known environment gotchas (this Mac specifically)
