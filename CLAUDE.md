@@ -49,7 +49,7 @@ Exposure: Tailscale Funnel path-routes `/netlify/webhook` and `/github/webhook` 
 
 `checks/<name>/` holds scheduled scripts (own README, `.env`, plist). First one: `checks/repeat-after-completion/` — run `node --test` there for tests and `node repeat.js --dry-run` before any real run. It writes to Apple Reminders through `~/bin/remctl` (not on PATH), only for reminders carrying an `#after-*` tag, so it is exempt from the approval gate; never extend that exemption to other checks.
 
-`checks/board-labels/` (Python, own `.venv`, `pip install -r requirements.txt`) prints a label per Gmail thread tagged `board` via Superhuman's MCP server and swaps the tag to `on-board`; run `board_labels.py --dry-run` before a real run, `--auth` once to store the OAuth refresh token in the Keychain. Its only write is that one tag swap on opted-in threads — the same narrow exemption, not a precedent.
+`checks/board-labels/` (Python, own `.venv`, `pip install -r requirements.txt`) prints a label per Gmail thread tagged `To Do` and swaps the tag to `@Triaged`, for one or several Gmail accounts (`GMAIL_ACCOUNTS`). Mail access is Gmail IMAP with per-account app passwords by default (`MAIL_BACKEND=imap`; Superhuman's MCP is the selectable alternative); run `board_labels.py --dry-run` before a real run, `--imap-auth [EMAIL ...]` once per account to store its app password in the Keychain, and `.venv/bin/python -m unittest` for the tests. Its only write is that one tag swap on opted-in threads — the same narrow exemption, not a precedent.
 
 ## Local model helper
 

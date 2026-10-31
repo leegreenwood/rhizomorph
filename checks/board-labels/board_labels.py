@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """Print a Brother QL label for every Gmail thread tagged "To Do", then retag it "@Triaged".
 
-Mail comes from Superhuman's remote MCP server (Gmail labels are Superhuman labels).
-One-time: `board_labels.py --auth` (browser sign-in, tokens kept in the login Keychain).
+Mail comes from Gmail over IMAP with a per-account app password (MAIL_BACKEND=imap, default; works
+for several accounts via GMAIL_ACCOUNTS) or from Superhuman's remote MCP server (MAIL_BACKEND=superhuman).
+One-time: `board_labels.py --imap-auth [EMAIL ...]` (app passwords kept in the login Keychain).
 Then:     `board_labels.py [--dry-run]` — unattended, every few minutes via launchd.
 See README.md in this folder.
 """
 
 import argparse
 import asyncio
+import getpass
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import time
+from contextlib import AsyncExitStack
 from datetime import datetime
 from pathlib import Path
 
@@ -28,10 +31,12 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAu
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import AnyUrl
 
+from imap_mail import ImapMail
+
 # ---- the few things you might change -------------------------------------------------------
 LABEL_TODO = "To Do"          # Gmail/Superhuman label that means "print me"
 LABEL_DONE = "@Triaged"      # swapped in after a successful print
-ACCOUNT_EMAIL = "lee.greenwood@gmail.com"
+ACCOUNT_EMAIL = "lee.greenwood@gmail.com"   # default account; its printed-ids.json entries are stored without a prefix
 PRINTER_MODEL = "QL-810W"
 ROLL = "62"                   # brother_ql label id: continuous 62mm tape (696 px printable width)
 SUBJECT_LINES = 3             # subject wraps onto up to this many lines; the label grows to fit
@@ -44,6 +49,8 @@ CALLBACK_PORT = 8790          # loopback redirect for the one-time sign-in (rece
 SCOPE = "openid email profile offline_access"
 KEYCHAIN = ("rhizomorph-board-labels", "superhuman-mcp")   # (service, account)
 PRINTED_FILE = HERE / "printed-ids.json"
+ALERT_STATE_FILE = HERE / "logs" / "alert-state.json"
+ALERT_EVERY_S = 6 * 3600       # repeat the same alert at most this often (the check itself runs every 5 minutes)
 LOG_FILE = Path(os.environ.get("LOG_FILE", HERE / "logs" / "board-labels.log"))
 LABEL_W = 696
 
@@ -75,6 +82,46 @@ def notify_moshi(title, message):
             log("alert_failed", status=r.status_code)
     except Exception as e:  # noqa: BLE001
         log("alert_failed", error=str(e))
+
+
+def alert(key, title, message):
+    """notify_moshi, but the same alert (by key) is sent at most every ALERT_EVERY_S — a persistent fault
+    would otherwise page every 5 minutes. A key that stops firing is forgotten, so it alerts again next time."""
+    try:
+        state = json.loads(ALERT_STATE_FILE.read_text())
+    except Exception:  # noqa: BLE001
+        state = {}
+    now = time.time()
+    if now - state.get(key, 0) < ALERT_EVERY_S:
+        return log("alert_suppressed", key=key, title=title)
+    state[key] = now
+    ALERT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ALERT_STATE_FILE.write_text(json.dumps(state))
+    notify_moshi(title, message)
+
+
+def clear_alert(key):
+    try:
+        state = json.loads(ALERT_STATE_FILE.read_text())
+        if state.pop(key, None) is not None:
+            ALERT_STATE_FILE.write_text(json.dumps(state))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# ---- Keychain-stored Gmail app passwords (IMAP backend), one item per account ------------------
+
+def imap_account(email):
+    return f"gmail-imap:{email}"
+
+
+def kc_get(account):
+    r = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN[0], "-a", account, "-w"], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def kc_set(account, value):
+    subprocess.run(["security", "add-generic-password", "-U", "-s", KEYCHAIN[0], "-a", account, "-X", value.encode().hex()], check=True, capture_output=True)
 
 
 # ---- Keychain-backed OAuth (SDK provider; one-time browser sign-in, refresh tokens after) --------
@@ -247,7 +294,9 @@ def print_label(img):
     return f"usb/cups:{queue}"
 
 
-# ---- Main --------------------------------------------------------------------------------------
+# ---- Mail backends -----------------------------------------------------------------------------
+# Both expose: async with Backend(account) -> labels_ok(), list_threads() -> [{thread_id, subject, sender, date, ...}],
+# swap(thread). A thread dict carries whatever extra the backend needs to swap its labels.
 
 def sender_of(msg):
     name = (msg.get("from_name") or "").strip()
@@ -261,50 +310,141 @@ def date_of(msg):
         return (msg.get("sent_at") or "")[:10]
 
 
-async def list_board_threads(client):
-    threads, cursor = [], None
-    while True:
-        args = {"labels": [LABEL_TODO], "acting_email": ACCOUNT_EMAIL, "limit": 50}
-        if cursor:
-            args["cursor"] = cursor
-        res = await client.call_tool("list_threads", args)
-        if res.is_error:
-            text = res.content[0].text if res.content else str(res)
-            if "Unknown label" in text:   # label not created yet: nothing to do, don't alert every 5 minutes
-                log("label_missing", label=LABEL_TODO, detail=text)
-                return []
-            raise RuntimeError(f"list_threads: {text}")
-        body = json.loads(res.content[0].text)
-        threads += body.get("threads", [])
-        cursor = body.get("next_cursor")
-        if not cursor:
-            return threads
+class SuperhumanBackend:
+    """Superhuman's remote MCP server (OAuth in the Keychain). One OAuth identity serves any linked account."""
 
+    def __init__(self, account):
+        self.account = account
 
-async def swap_labels(client, t):
-    res = await client.call_tool("update_thread", {"thread_id": t["thread_id"], "last_message_id": t["last_message_id"],
-                                                   "add_labels": [LABEL_DONE], "remove_labels": [LABEL_TODO], "acting_email": ACCOUNT_EMAIL})
-    if res.is_error:
-        raise RuntimeError(f"update_thread: {res.content[0].text if res.content else res}")
+    async def __aenter__(self):
+        self._stack = AsyncExitStack()
+        http = await self._stack.enter_async_context(create_mcp_http_client(auth=oauth(interactive=False)))
+        self._client = await self._stack.enter_async_context(Client(streamable_http_client(MCP_URL, http_client=http, terminate_on_close=False)))
+        return self
 
+    async def __aexit__(self, *exc):
+        return await self._stack.__aexit__(*exc)
 
-async def run(dry_run):
-    printed = set(json.loads(PRINTED_FILE.read_text())) if PRINTED_FILE.exists() else set()
-    counts = {"matched": 0, "printed": 0, "skipped_already_printed": 0, "failed": 0}
-    failures = []
-    http = create_mcp_http_client(auth=oauth(interactive=False))
-    async with http, Client(streamable_http_client(MCP_URL, http_client=http, terminate_on_close=False)) as client:
-        res = await client.call_tool("list_labels", {"acting_email": ACCOUNT_EMAIL})
+    async def labels_ok(self):
+        res = await self._client.call_tool("list_labels", {"acting_email": self.account})
         labels = json.loads(res.content[0].text).get("labels", []) if not res.is_error else []
         if LABEL_DONE not in labels:   # don't print anything we could not then retag
-            log("label_missing", label=LABEL_DONE, detail="create it in Superhuman/Gmail first")
-            return
-        threads = await list_board_threads(client)
-        counts["matched"] = len(threads)
+            log("label_missing", account=self.account, label=LABEL_DONE, detail="create it in Superhuman/Gmail first")
+            return False
+        return True
+
+    async def list_threads(self):
+        threads, cursor = [], None
+        while True:
+            args = {"labels": [LABEL_TODO], "acting_email": self.account, "limit": 50}
+            if cursor:
+                args["cursor"] = cursor
+            res = await self._client.call_tool("list_threads", args)
+            if res.is_error:
+                text = res.content[0].text if res.content else str(res)
+                if "Unknown label" in text:   # label not created yet: nothing to do, don't alert every 5 minutes
+                    log("label_missing", account=self.account, label=LABEL_TODO, detail=text)
+                    return []
+                raise RuntimeError(f"list_threads: {text}")
+            body = json.loads(res.content[0].text)
+            threads += body.get("threads", [])
+            cursor = body.get("next_cursor")
+            if not cursor:
+                break
+        out = []
         for t in threads:
             msg = (t.get("messages") or [{}])[-1]
-            info = {"thread_id": t["thread_id"], "subject": t.get("subject", ""), "sender": sender_of(msg), "date": date_of(msg)}
-            if t["thread_id"] in printed and not dry_run:
+            out.append({"thread_id": t["thread_id"], "subject": t.get("subject", ""), "sender": sender_of(msg), "date": date_of(msg), "_raw": t})
+        return out
+
+    async def swap(self, t):
+        raw = t["_raw"]
+        res = await self._client.call_tool("update_thread", {"thread_id": raw["thread_id"], "last_message_id": raw["last_message_id"],
+                                                              "add_labels": [LABEL_DONE], "remove_labels": [LABEL_TODO], "acting_email": self.account})
+        if res.is_error:
+            raise RuntimeError(f"update_thread: {res.content[0].text if res.content else res}")
+
+
+class ImapBackend:
+    """Gmail over IMAP with this account's app password from the Keychain. Independent of Superhuman."""
+
+    def __init__(self, account):
+        self.account = account
+
+    async def __aenter__(self):
+        password = kc_get(imap_account(self.account))
+        if not password:
+            raise RuntimeError(f"no Gmail app password stored for {self.account}. Run: board_labels.py --imap-auth {self.account}")
+        self._mail = ImapMail(self.account, password, LABEL_TODO, LABEL_DONE)
+        self._mail.connect()
+        return self
+
+    async def __aexit__(self, *exc):
+        self._mail.close()
+
+    async def labels_ok(self):
+        for label in (LABEL_DONE, LABEL_TODO):   # DONE first: never print what we could not retag
+            if not self._mail.label_exists(label):
+                log("label_missing", account=self.account, label=label,
+                    detail="create it in Gmail, and make sure the label is set to 'Show in IMAP' (Gmail → Settings → Labels)")
+                return False
+        return True
+
+    async def list_threads(self):
+        return self._mail.todo_threads()
+
+    async def swap(self, t):
+        self._mail.swap(t["uids"])
+
+
+def backend_name():
+    return os.environ.get("MAIL_BACKEND", "imap").strip().lower()
+
+
+def make_backend(account):
+    name = backend_name()
+    if name == "imap":
+        return ImapBackend(account)
+    if name == "superhuman":
+        return SuperhumanBackend(account)
+    raise RuntimeError(f"unknown MAIL_BACKEND {name!r} (use imap or superhuman)")
+
+
+def accounts():
+    """GMAIL_ACCOUNTS=a@gmail.com,b@gmail.com (order kept, duplicates dropped); defaults to ACCOUNT_EMAIL."""
+    raw = os.environ.get("GMAIL_ACCOUNTS", "")
+    seen = []
+    for a in (x.strip() for x in raw.split(",")):
+        if a and a not in seen:
+            seen.append(a)
+    return seen or [ACCOUNT_EMAIL]
+
+
+def printed_key(account, thread_id):
+    """Thread ids are only unique per account. The original account keeps bare ids so the existing
+    printed-ids.json stays valid; every other account is namespaced."""
+    return thread_id if account == ACCOUNT_EMAIL else f"{account}:{thread_id}"
+
+
+# ---- Main --------------------------------------------------------------------------------------
+
+def unwrap(e):
+    while isinstance(e, BaseExceptionGroup) and e.exceptions:   # anyio task groups wrap the real cause
+        e = e.exceptions[0]
+    return e
+
+
+async def run_account(account, dry_run, printed, failures):
+    counts = {"matched": 0, "printed": 0, "skipped_already_printed": 0, "failed": 0}
+    async with make_backend(account) as backend:
+        if not await backend.labels_ok():
+            return counts
+        threads = await backend.list_threads()
+        counts["matched"] = len(threads)
+        for t in threads:
+            key = printed_key(account, t["thread_id"])
+            info = {"account": account, "thread_id": t["thread_id"], "subject": t["subject"], "sender": t["sender"], "date": t["date"]}
+            if key in printed:
                 counts["skipped_already_printed"] += 1   # counted in run_summary only; seeded backlog would be noisy
                 continue
             img = render(info["subject"], info["sender"], info["date"])
@@ -315,27 +455,78 @@ async def run(dry_run):
                 continue
             try:
                 via = print_label(img)
-                printed.add(t["thread_id"])
+                printed.add(key)
                 PRINTED_FILE.write_text(json.dumps(sorted(printed)))
-                await swap_labels(client, t)
+                await backend.swap(t)
                 counts["printed"] += 1
                 log("printed", via=via, **info)
             except Exception as e:  # noqa: BLE001
                 counts["failed"] += 1
                 failures.append(f"{info['subject'][:40]}: {e}")
                 log("failed", error=str(e), **info)
-    log("run_summary", dry_run=dry_run, **counts)
+    return counts
+
+
+async def run(dry_run):
+    printed = set(json.loads(PRINTED_FILE.read_text())) if PRINTED_FILE.exists() else set()
+    failures, errors = [], []
+    for account in accounts():   # one account failing must never stop the others
+        try:
+            counts = await run_account(account, dry_run, printed, failures)
+        except Exception as e:  # noqa: BLE001
+            e = unwrap(e)
+            errors.append(f"{account}: {e}"[:200])
+            log("fatal", account=account, error=repr(e))
+            continue
+        log("run_summary", account=account, dry_run=dry_run, backend=backend_name(), **counts)
+    if errors:
+        alert("fatal", "🔴 Board label check crashed", " | ".join(errors)[:300])
     if failures:
-        notify_moshi("🔴 Board label print failed", f"{len(failures)} label(s) failed: " + " | ".join(failures[:3])[:300])
+        alert("print-failed", "🔴 Board label print failed", f"{len(failures)} label(s) failed: " + " | ".join(failures[:3])[:300])
+    if not errors:
+        clear_alert("fatal")
+    if not failures:
+        clear_alert("print-failed")
+    if errors or failures:
         sys.exit(1)
+
+
+def imap_auth(emails):
+    """One-time per account: store a Gmail app password in the Keychain after proving it logs in."""
+    ok = True
+    for email in emails or accounts():
+        print(f"\n{email}\nCreate an app password at https://myaccount.google.com/apppasswords (needs 2-Step Verification).")
+        password = getpass.getpass("App password (input hidden): ").replace(" ", "").strip()
+        if not password:
+            print("  skipped (empty)")
+            ok = False
+            continue
+        mail = ImapMail(email, password, LABEL_TODO, LABEL_DONE)
+        try:
+            mail.connect()
+            missing = [l for l in (LABEL_TODO, LABEL_DONE) if not mail.label_exists(l)]
+        except Exception as e:  # noqa: BLE001
+            print(f"  FAILED: {e}")
+            ok = False
+            continue
+        finally:
+            mail.close()
+        kc_set(imap_account(email), password)
+        print(f"  OK: logged in, app password saved to the login Keychain.")
+        if missing:
+            print(f"  WARNING: label(s) not visible over IMAP: {', '.join(missing)} — create them / set 'Show in IMAP' in Gmail → Settings → Labels.")
+    return 0 if ok else 1
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--auth", action="store_true", help="one-time browser sign-in to Superhuman; stores tokens in the Keychain")
-    p.add_argument("--dry-run", action="store_true", help="render each label to logs/dry-run-<thread>.png and print nothing; labels are left as they are")
+    p.add_argument("--imap-auth", nargs="*", metavar="EMAIL", help="one-time: store a Gmail app password per account (all of GMAIL_ACCOUNTS if none given)")
+    p.add_argument("--auth", action="store_true", help="(superhuman backend only) one-time browser sign-in; stores tokens in the Keychain")
+    p.add_argument("--dry-run", action="store_true", help="render each not-yet-printed label to logs/dry-run-<thread>.png and print nothing; labels are left as they are")
     a = p.parse_args()
     load_env()
+    if a.imap_auth is not None:
+        return sys.exit(imap_auth(a.imap_auth))
     if a.auth:
         return asyncio.run(authorize())
     try:
@@ -343,10 +534,9 @@ def main():
     except SystemExit:
         raise
     except Exception as e:  # noqa: BLE001
-        while isinstance(e, BaseExceptionGroup) and e.exceptions:   # unwrap anyio task groups to the real cause
-            e = e.exceptions[0]
+        e = unwrap(e)
         log("fatal", error=repr(e))
-        notify_moshi("🔴 Board label check crashed", str(e)[:300])
+        alert("fatal", "🔴 Board label check crashed", str(e)[:300])
         sys.exit(1)
 
 
