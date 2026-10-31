@@ -54,6 +54,10 @@ Tests: `.venv/bin/python -m unittest -v` (IMAP parsing against a fake server, mu
 - `PRINTER_IP` set → network backend, port 9100.
 - `PRINTER_IP` unset → USB fallback: the raster is handed raw to the CUPS queue macOS creates for the USB-attached printer (`lp -d Brother_QL_810W -o raw`). No libusb needed. Override the queue name with `PRINTER_CUPS_QUEUE` if `lpstat -p` shows a different one.
 
+### Printer offline
+
+`lp` reports success as soon as CUPS queues a job, even with the printer off or unplugged, so the USB path waits for the job to actually leave the queue (up to 60 s). If it doesn't, the job is cancelled (so it can't print later as a duplicate), the thread is **not** retagged or recorded in `printed-ids.json`, no further labels are tried that run, and a throttled Moshi alert goes out. The next 5-minute run retries once the printer is back. (The network path waits on the printer directly.)
+
 ## Scheduling
 
 `com.rhizomorph.board-labels.plist` runs it every 5 minutes (`StartInterval` 300).

@@ -120,6 +120,22 @@ class RunTests(unittest.TestCase):
         self.assertEqual(self.printed_file(), set())   # not recorded, so the next run prints it
         self.assertEqual(self.alerts[0][0], "🔴 Board label print failed")
 
+    def test_printer_down_stops_the_run_and_retags_nothing(self):
+        FakeBackend.threads = {A: [thread("a1"), thread("a2")], B: [thread("b1")]}
+        attempts = []
+        def offline(img):
+            attempts.append(1)
+            raise bl.PrinterUnavailable("printer did not take the job")
+        with mock.patch.object(bl, "print_label", offline):
+            self.assertEqual(self.run_check(), 1)
+        self.assertEqual(len(attempts), 1, "after one timeout, no further labels are tried this run (or on other accounts)")
+        self.assertEqual(FakeBackend.swapped, [])
+        self.assertEqual(self.printed_file(), set())
+        self.assertEqual(len(self.alerts), 1)
+        # printer back: the next run prints everything that was left
+        self.assertEqual(self.run_check(), 0)
+        self.assertEqual(sorted(FakeBackend.swapped), sorted([(A, "a1"), (A, "a2"), (B, "b1")]))
+
     def test_dry_run_prints_and_swaps_nothing(self):
         FakeBackend.threads = {A: [thread("aaa")]}
         self.assertEqual(self.run_check(dry_run=True), 0)
@@ -146,6 +162,49 @@ class RunTests(unittest.TestCase):
         for name, cls in (("imap", bl.ImapBackend), ("superhuman", bl.SuperhumanBackend)):
             with mock.patch.dict(os.environ, {"MAIL_BACKEND": name}):
                 self.assertIsInstance(REAL_MAKE_BACKEND(A), cls)
+
+
+class CupsPrintTests(unittest.TestCase):
+    """print_label's USB path against a faked lp/lpstat/cancel."""
+
+    def run_print(self, still_pending, lp_out="request id is Brother_QL_810W-12 (1 file(s))\n"):
+        calls = []
+        def fake_run(cmd, **kw):
+            calls.append(cmd[0])
+            return mock.Mock(stdout=lp_out if cmd[0] == "lp" else "", returncode=0)
+        env = {k: v for k, v in os.environ.items() if k != "PRINTER_IP"}
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(bl.subprocess, "run", fake_run), \
+                mock.patch.object(bl, "wait_for_cups_job", lambda q, j: not still_pending):
+            try:
+                return calls, bl.print_label(bl.render("Subject", "Sender", "2026-10-30")), None
+            except Exception as e:  # noqa: BLE001
+                return calls, None, e
+
+    def test_job_that_leaves_the_queue_is_a_success(self):
+        calls, via, err = self.run_print(still_pending=False)
+        self.assertIsNone(err)
+        self.assertTrue(via.startswith("usb/cups"))
+        self.assertNotIn("cancel", calls)
+
+    def test_job_stuck_in_queue_is_cancelled_and_reported(self):
+        calls, via, err = self.run_print(still_pending=True)
+        self.assertIsInstance(err, bl.PrinterUnavailable)
+        self.assertIn("cancel", calls, "an unprinted job must be cancelled or it prints later as a duplicate")
+
+    def test_unreadable_job_id_is_an_error_not_a_success(self):
+        _, via, err = self.run_print(still_pending=False, lp_out="something unexpected")
+        self.assertIsNone(via)
+        self.assertIsInstance(err, RuntimeError)
+
+    def test_wait_sees_a_pending_job_then_its_absence(self):
+        outs = iter(["Brother_QL_810W-12  lee 20480 Fri Oct 30\n", ""])
+        with mock.patch.object(bl.subprocess, "run", lambda *a, **k: mock.Mock(stdout=next(outs))), mock.patch.object(bl.time, "sleep", lambda s: None):
+            self.assertTrue(bl.wait_for_cups_job("Brother_QL_810W", "Brother_QL_810W-12", timeout=30))
+
+    def test_wait_gives_up_after_the_timeout(self):
+        pending = "Brother_QL_810W-12  lee 20480 Fri Oct 30\n"
+        with mock.patch.object(bl.subprocess, "run", lambda *a, **k: mock.Mock(stdout=pending)), mock.patch.object(bl.time, "sleep", lambda s: None):
+            self.assertFalse(bl.wait_for_cups_job("Brother_QL_810W", "Brother_QL_810W-12", timeout=0))
 
 
 if __name__ == "__main__":

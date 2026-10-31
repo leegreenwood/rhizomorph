@@ -13,6 +13,7 @@ import asyncio
 import getpass
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -271,6 +272,25 @@ def render(subject, sender, date):
 
 # ---- Printing ----------------------------------------------------------------------------------
 
+class PrinterUnavailable(RuntimeError):
+    """The printer did not take the job (off, unplugged, asleep). Nothing is retagged; the next run retries."""
+
+
+PRINT_WAIT_S = 60   # a label takes seconds; longer than this means the printer isn't there
+
+
+def wait_for_cups_job(queue, job_id, timeout=None):
+    """True once CUPS no longer lists the job as pending; False if it is still pending after `timeout` seconds."""
+    deadline = time.time() + (PRINT_WAIT_S if timeout is None else timeout)
+    while True:
+        out = subprocess.run(["lpstat", "-W", "not-completed", "-o", queue], capture_output=True, text=True).stdout
+        if not any(line.split()[:1] == [job_id] for line in out.splitlines()):
+            return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(2)
+
+
 def print_label(img):
     from brother_ql.backends.helpers import send
     from brother_ql.conversion import convert
@@ -288,9 +308,16 @@ def print_label(img):
     with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
         f.write(data)
     try:
-        subprocess.run(["lp", "-d", queue, "-o", "raw", f.name], check=True, capture_output=True, text=True)
+        sent = subprocess.run(["lp", "-d", queue, "-o", "raw", f.name], check=True, capture_output=True, text=True)
     finally:
         os.unlink(f.name)
+    # `lp` succeeds as soon as CUPS queues the job, even with the printer off: wait for it to actually leave the queue.
+    m = re.search(r"request id is (\S+)", sent.stdout)
+    if not m:
+        raise RuntimeError(f"could not read the CUPS job id from lp output: {sent.stdout!r}")
+    if not wait_for_cups_job(queue, m.group(1)):
+        subprocess.run(["cancel", m.group(1)], check=False, capture_output=True)   # else it would print later as a duplicate
+        raise PrinterUnavailable(f"printer did not take the job within {PRINT_WAIT_S}s (is the QL-810W on and plugged in?); job cancelled")
     return f"usb/cups:{queue}"
 
 
@@ -434,6 +461,9 @@ def unwrap(e):
     return e
 
 
+PRINTER_STATE = {"down": False}   # set when a job times out: don't spend a minute per label on the rest of the run
+
+
 async def run_account(account, dry_run, printed, failures):
     counts = {"matched": 0, "printed": 0, "skipped_already_printed": 0, "failed": 0}
     async with make_backend(account) as backend:
@@ -442,6 +472,8 @@ async def run_account(account, dry_run, printed, failures):
         threads = await backend.list_threads()
         counts["matched"] = len(threads)
         for t in threads:
+            if PRINTER_STATE["down"]:
+                break
             key = printed_key(account, t["thread_id"])
             info = {"account": account, "thread_id": t["thread_id"], "subject": t["subject"], "sender": t["sender"], "date": t["date"]}
             if key in printed:
@@ -464,12 +496,16 @@ async def run_account(account, dry_run, printed, failures):
                 counts["failed"] += 1
                 failures.append(f"{info['subject'][:40]}: {e}")
                 log("failed", error=str(e), **info)
+                if isinstance(e, PrinterUnavailable):
+                    PRINTER_STATE["down"] = True
+                    break
     return counts
 
 
 async def run(dry_run):
     printed = set(json.loads(PRINTED_FILE.read_text())) if PRINTED_FILE.exists() else set()
     failures, errors = [], []
+    PRINTER_STATE["down"] = False
     for account in accounts():   # one account failing must never stop the others
         try:
             counts = await run_account(account, dry_run, printed, failures)
