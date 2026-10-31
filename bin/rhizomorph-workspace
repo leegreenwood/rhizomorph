@@ -1,18 +1,45 @@
 #!/bin/zsh
-# Create the "Rhizomorph" Herdr workspace if it isn't there: left = live status board, right = merged logs.
-# Idempotent — safe to run any time (e.g. after a reboot). Needs the Herdr server running.
+# Ensure the "Rhizomorph" Herdr workspace exists and its panes are running:
+#   left  = live status board (bin/rhizomorph-status), right = merged log tail.
+# Idempotent. Herdr restores a workspace's panes after a restart but not the commands inside them, so
+# an existing workspace is repaired: any pane that is back at a bare shell gets its command restarted.
+# Needs the Herdr server running.
 ROOT="${0:A:h:h}"
 LABEL=Rhizomorph
+STATUS_CMD="$ROOT/bin/rhizomorph-status"
+LOGS_CMD="tail -n 20 -F $ROOT/receivers/netlify/logs/out.log $ROOT/receivers/github/logs/out.log $ROOT/checks/repeat-after-completion/logs/repeat-after-completion.log $ROOT/checks/board-labels/logs/board-labels.log"
 
-if herdr workspace list | python3 -c 'import sys,json; sys.exit(0 if any(w["label"]==sys.argv[1] for w in json.load(sys.stdin)["result"]["workspaces"]) else 1)' "$LABEL"; then
-  echo "Workspace \"$LABEL\" already exists."; exit 0
+json() { python3 -c "import sys,json; d=json.load(sys.stdin); $1"; }
+
+WS=$(herdr workspace list | json "print(next((w['workspace_id'] for w in d['result']['workspaces'] if w['label']=='$LABEL'), ''))")
+
+if [[ -z "$WS" ]]; then
+  CREATED=$(herdr workspace create --cwd "$ROOT" --label "$LABEL" --no-focus)
+  WS=$(print -r -- "$CREATED" | json "print(d['result']['workspace']['workspace_id'])")
+  ROOT_PANE=$(print -r -- "$CREATED" | json "print(d['result']['root_pane']['pane_id'])")
+  herdr pane split "$ROOT_PANE" --direction right --cwd "$ROOT" --no-focus >/dev/null
+  echo "Created workspace \"$LABEL\" ($WS)."
 fi
 
-CREATED=$(herdr workspace create --cwd "$ROOT" --label "$LABEL" --no-focus)
-ROOT_PANE=$(print -r -- "$CREATED" | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])')
-LOG_PANE=$(herdr pane split "$ROOT_PANE" --direction right --cwd "$ROOT" --no-focus \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')
+# Panes in creation order: first = status board, second = logs.
+PANES=(${(f)"$(herdr pane list | json "
+ids=[p['pane_id'] for p in d['result']['panes'] if p.get('workspace_id')=='$WS']
+print('\n'.join(sorted(ids, key=lambda s: [int(x) for x in __import__('re').findall(r'\d+', s)])))")"})
 
-herdr pane run "$ROOT_PANE" "$ROOT/bin/rhizomorph-status"
-herdr pane run "$LOG_PANE" "tail -n 20 -F $ROOT/receivers/netlify/logs/out.log $ROOT/receivers/github/logs/out.log $ROOT/checks/repeat-after-completion/logs/repeat-after-completion.log"
-echo "Created workspace \"$LABEL\" (status: $ROOT_PANE, logs: $LOG_PANE)."
+if (( ${#PANES} < 2 )); then
+  echo "Workspace \"$LABEL\" ($WS) has ${#PANES} pane(s), expected 2 — close it in Herdr and re-run." >&2
+  exit 1
+fi
+
+ensure() { # pane, marker that identifies the running command, command to start
+  local pane=$1 marker=$2 cmd=$3
+  if herdr pane process-info --pane "$pane" | json "sys_exit = 0 if any('$marker' in p.get('cmdline','') for p in d['result']['process_info']['foreground_processes']) else 1; raise SystemExit(sys_exit)"; then
+    echo "  $pane: already running"
+  else
+    herdr pane run "$pane" "$cmd" >/dev/null && echo "  $pane: started"
+  fi
+}
+
+echo "Workspace \"$LABEL\" ($WS):"
+ensure "${PANES[1]}" "rhizomorph-status" "$STATUS_CMD"
+ensure "${PANES[2]}" "tail -n 20 -F" "$LOGS_CMD"
