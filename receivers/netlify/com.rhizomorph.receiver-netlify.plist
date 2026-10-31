@@ -6,7 +6,7 @@
   <!-- Absolute server.js path keeps the pgrep -fl "receivers/netlify/server.js" pattern working. -->
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/opt/node@22/bin/node</string>
+    <string>/opt/homebrew/opt/node/bin/node</string>
     <string>--env-file=/Users/leegreenwood/Code/rhizomorph/receivers/netlify/.env</string>
     <string>/Users/leegreenwood/Code/rhizomorph/receivers/netlify/server.js</string>
   </array>
@@ -18,7 +18,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key><string>/Users/leegreenwood</string>
-    <key>PATH</key><string>/opt/homebrew/opt/node@22/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>/opt/homebrew/opt/node/bin:/usr/bin:/bin</string>
   </dict>
   <key>StandardOutPath</key><string>/Users/leegreenwood/Code/rhizomorph/receivers/netlify/logs/out.log</string>
   <key>StandardErrorPath</key><string>/Users/leegreenwood/Code/rhizomorph/receivers/netlify/logs/out.log</string>

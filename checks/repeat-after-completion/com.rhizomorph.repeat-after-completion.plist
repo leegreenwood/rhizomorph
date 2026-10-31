@@ -5,7 +5,7 @@
   <key>Label</key><string>com.rhizomorph.repeat-after-completion</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/opt/node@22/bin/node</string>
+    <string>/opt/homebrew/opt/node/bin/node</string>
     <string>/Users/leegreenwood/Code/rhizomorph/checks/repeat-after-completion/repeat.js</string>
   </array>
   <key>WorkingDirectory</key><string>/Users/leegreenwood/Code/rhizomorph/checks/repeat-after-completion</string>
@@ -15,7 +15,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key><string>/Users/leegreenwood</string>
-    <key>PATH</key><string>/opt/homebrew/opt/node@22/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>/opt/homebrew/opt/node/bin:/usr/bin:/bin</string>
   </dict>
   <key>StandardOutPath</key><string>/Users/leegreenwood/Code/rhizomorph/checks/repeat-after-completion/logs/launchd.out.log</string>
   <key>StandardErrorPath</key><string>/Users/leegreenwood/Code/rhizomorph/checks/repeat-after-completion/logs/launchd.err.log</string>
