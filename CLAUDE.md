@@ -43,7 +43,7 @@ Each signal source lives under `receivers/<source>/` as an independent, self-con
 
 Repo scope is enforced by which repos have the webhook configured (GitHub Settings → Webhooks, per repo, events restricted to "Workflow runs") — the receiver itself doesn't allowlist by repo, matching how the Netlify receiver trusts whatever hits it with a valid signature.
 
-Exposure: Tailscale Funnel path-routes `/netlify/webhook` and `/github/webhook` to `127.0.0.1:8788` and `127.0.0.1:8789` respectively, off the same tailnet hostname Hyphae's `/mcp` proxy already uses (`tailscale funnel status` shows all three). Adding a new signal source means adding another `--set-path` route rather than a new hostname/port scheme elsewhere.
+Exposure: Tailscale Funnel path-routes `/netlify/webhook` and `/github/webhook` to `127.0.0.1:8788` and `127.0.0.1:8789` respectively, on port 443 of the tailnet hostname. Hyphae's `/mcp` shares the hostname but is not on the Funnel: it is tailnet-only on port 8443 through `tailscale serve`, and must stay off port 443. `tailscale funnel status` shows all three routes and which are public; the CLI isn't on PATH, so use `/Applications/Tailscale.app/Contents/MacOS/Tailscale`. Adding a new signal source means adding another `--set-path` route rather than a new hostname/port scheme elsewhere.
 
 ## Scheduled checks
 
