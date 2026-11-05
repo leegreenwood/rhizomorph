@@ -18,7 +18,7 @@ This is enforced structurally, not just by convention:
 - **Host**: this Mac, reachable via Tailscale (`lees-mac-studio.taile2c8d3.ts.net`).
 - **Session**: one persistent, named Herdr session/workspace ("Rhizomorph") — long-lived, not spun up on demand. This repo's `cwd` is that workspace.
 - **Agent runtime**: Claude Code running inside that Herdr session.
-- **Alerting**: `moshi-hook` is paired and running as a persistent `brew services` daemon, with Claude Code hooks installed. It reports Claude Code's own approval prompts. Point-to-point notifications (e.g. from the Netlify receiver below) instead POST directly to Moshi's webhook API (`https://api.getmoshi.app/api/webhook`) with a bearer-style `token` — a separate, simpler mechanism from the hook-based approval flow.
+- **Alerting**: `moshi-hook` is paired and running as a persistent `brew services` daemon, with Claude Code and Codex hooks installed. It reports Claude Code's approval prompts; Codex's should work the same way, but that hasn't been confirmed end to end. Point-to-point notifications (e.g. from the Netlify receiver below) instead POST directly to Moshi's webhook API (`https://api.getmoshi.app/api/webhook`) with a bearer-style `token` — a separate, simpler mechanism from the hook-based approval flow.
 - **Reachability for external sources** (anything not already on the tailnet, e.g. Netlify): exposed via Tailscale Funnel, path-routed per service off the same hostname (see below).
 
 ## Signal sources
@@ -40,13 +40,13 @@ This is enforced structurally, not just by convention:
 - **Runs**: as a launchd LaunchAgent (`com.rhizomorph.receiver-github`, see [Process supervision](#process-supervision)), listening on `127.0.0.1:8789`.
 - **Exposed at**: `https://lees-mac-studio.taile2c8d3.ts.net/github/webhook` via `tailscale funnel --set-path=/github/webhook`, alongside `/netlify/webhook`.
 - **Config**: `receivers/github/.env` (gitignored) needs `PORT`, `GITHUB_WEBHOOK_SECRET` (shared HMAC secret, also pasted into each repo's GitHub webhook config), and `MOSHI_WEBHOOK_TOKEN`.
-- **Wired up repos**: `attested` (the actual motivating case — deploys to Azure Container Apps + Azure Static Web Apps via `deploy.yml`/`deploy-website.yml`, neither visible to Netlify), plus iyvs, zanshinarchery, greenwoodbushcraft, ownpaceoutfitters (same four as the Netlify sites, added for consistency). All added via `gh api repos/{owner}/{repo}/hooks`, events restricted to `workflow_run` only. Ping delivery confirmed 200 on all five; success/failure notification logic verified against `attested` with signed simulated payloads (a real end-to-end test would require an actual push-triggered Azure deploy, which wasn't done just to test notifications).
+- **Wired up repos**: `attested` (the actual motivating case — deploys to Azure Container Apps + Azure Static Web Apps via `deploy.yml`/`deploy-website.yml`, neither visible to Netlify), plus iyvs, zanshinarchery, greenwoodbushcraft, ownpaceoutfitters (also Netlify sites, added for consistency). All added via `gh api repos/{owner}/{repo}/hooks`, events restricted to `workflow_run` only. Ping delivery confirmed 200 on all five; success/failure notification logic verified against `attested` with signed simulated payloads (a real end-to-end test would require an actual push-triggered Azure deploy, which wasn't done just to test notifications).
 - **Known limitation**: Moshi's webhook API rate-limits at 10 notifications/minute on the free tier (`429` on excess) — confirmed by hitting it during testing. The receiver doesn't retry on a dropped push, so a burst of failures in the same minute could mean a later one silently doesn't page.
 - **To restart**: `launchctl kickstart -k gui/$(id -u)/com.rhizomorph.receiver-github`.
 
 #### Process supervision
 
-Both receivers (and the [repeat-after-completion check](checks/repeat-after-completion/)) run as per-user **launchd LaunchAgents**: started at login, restarted within ~10s if they crash or are killed (`KeepAlive`), stdout/stderr appended to each receiver's `logs/out.log`. They previously ran as `nohup` processes inside the Herdr session, which silently died on every reboot — launchd was ruled out then because it cannot spawn from `/Volumes/Flexdrive` (`EX_CONFIG`, no logs). The repo now lives on the internal disk, so that limit no longer applies; if it moves back to Flexdrive, every agent here will stop spawning. Plists live beside each `server.js` and are copied into `~/Library/LaunchAgents/`.
+Both receivers run, as do the [repeat-after-completion](checks/repeat-after-completion/) and [board-labels](checks/board-labels/) checks, as per-user **launchd LaunchAgents**: started at login, restarted within ~10s if they crash or are killed (`KeepAlive`), stdout/stderr appended to each receiver's `logs/out.log`. They previously ran as `nohup` processes inside the Herdr session, which silently died on every reboot — launchd was ruled out then because it cannot spawn from `/Volumes/Flexdrive` (`EX_CONFIG`, no logs). The repo now lives on the internal disk, so that limit no longer applies; if it moves back to Flexdrive, every agent here will stop spawning. Plists live beside each `server.js` and are copied into `~/Library/LaunchAgents/`.
 
 #### Herdr window
 
@@ -62,26 +62,32 @@ More than one unrelated Node service on this Mac is literally named `server.js` 
 
 ### 4. Board labels — scheduled check
 
-[`checks/board-labels/`](checks/board-labels/) prints a Brother QL-810W label for every Gmail thread tagged `board` (subject, sender, date) and retags it `on-board`, so sticking the label on the office card board is the act of pulling an email into active work — replacing the old forward-to-Trello routing for active items. Plain Python, no AI call: reads mail through Superhuman's remote MCP server with a device-code OAuth grant whose refresh token lives in the login Keychain, so it runs unattended. Every 5 minutes via a per-user launchd LaunchAgent, same reasoning as `repeat-after-completion`; mutates only the one tag on threads the user opted in, so not approval-gated. Details, flags and setup in its README.
+[`checks/board-labels/`](checks/board-labels/) prints a Brother QL-810W label for every Gmail thread tagged `To Do` (subject, sender, date) and retags it `@Triaged`, so sticking the label on the office card board is the act of pulling an email into active work. Plain Python, no AI call. Mail comes from Gmail over IMAP with per-account app passwords held in the login Keychain, so it runs unattended, with Superhuman's MCP server as the selectable alternative. Every 5 minutes via a per-user launchd LaunchAgent, same reasoning as `repeat-after-completion`; mutates only the one tag on threads the user opted in, so not approval-gated. Details, flags and setup in its README.
 
-### 5. OmniFocus daily digest — not planned
+### 5. Hyphae pull — scheduled check
+
+[`checks/pull-hyphae/`](checks/pull-hyphae/) runs `git pull --ff-only` on `~/Code/hyphae` at 06:30 through a per-user launchd LaunchAgent, to bring down the daily notes. It only fast-forwards the local working copy and never pushes, so it isn't approval-gated; failures push through the same Moshi webhook as the receivers. Details in its README.
+
+### 6. OmniFocus daily digest — not planned
 
 Was floated as a candidate signal source; confirmed **not** a planned feature. The OmniFocus MCP server has been removed from `.mcp.json`.
 
+### 7. Spores — not wired up yet
+
+Rhizomorph doesn't read [Spores](../spores-app) yet. When it does, it will act only on spores the user flags with **Z** (`spores list --flagged --json`), and flagged RSS text stays untrusted.
+
 ## Local model helper
 
-> **Retired 2026-10-28.** Claude no longer uses this helper; small jobs go to Codex agents on LM Studio or Azure, run in Herdr panes (see `~/Code/talkterms/MULTI-MODEL.md` and the `codex-agent` skill). The script and the MLX scripts are kept for reference.
-
-[`bin/local-llm`](bin/local-llm) lets Claude hand small, self-contained jobs to the local MLX model (served by `raycast/mlx-start.sh`) while staying the coordinator: Claude runs it through Bash, gets the reply on stdout and reviews it. It works the same in VS Code, a terminal or a Herdr pane, local or over `herdr --remote`, and writes nothing, so it sits outside the approval gate. Watch it work with `tail -f ~/Library/Logs/local-llm.log`. A later step could run a full local coding agent in a sibling Herdr pane, driven with `herdr agent prompt`, once a larger model is available.
+Retired on 2026-10-28. `bin/local-llm` and the MLX scripts are kept for reference only. Small jobs now go to Codex agents in Herdr panes (see `~/Code/talkterms/MULTI-MODEL.md` and the `codex-agent` skill).
 
 ## Scheduling approach
 
-Deterministic scripts and the webhook receivers run under **launchd** (see [Process supervision](#process-supervision)), so they survive reboots and don't depend on the Herdr session being alive. In-session `/schedule` routines remain the choice for checks that need the agent's judgement rather than a fixed script. (No `/schedule` routines registered yet.)
+Deterministic scripts and the webhook receivers run under **launchd** (see [Process supervision](#process-supervision)), so they survive reboots and don't depend on the Herdr session being alive. In-session `/schedule` routines remain the choice for checks that need the agent's judgement rather than a fixed script.
 
 ## Open questions / next steps
 
 - [x] Confirm the name — "Rhizomorph" confirmed, workspace is labeled accordingly.
 - [ ] Scope the permission policy precisely: which tools are read-only/auto-approved vs. which require a Moshi approval round-trip.
-- [x] Build the Netlify webhook receiver + Tailscale Funnel exposure — live for 4 sites; 4 more `deploy_failed` hooks + 3 more sites' `deploy_succeeded` hooks still to be added manually in the Netlify dashboard.
-- [x] Build the GitHub Actions webhook receiver + Tailscale Funnel exposure — live for the same 4 repos as the Netlify sites, configured via `gh api` rather than the dashboard.
+- [x] Build the Netlify webhook receiver + Tailscale Funnel exposure — live for all 12 sites.
+- [x] Build the GitHub Actions webhook receiver + Tailscale Funnel exposure — live for 5 repos, configured via `gh api` rather than the dashboard.
 - [ ] Decide whether Rhizomorph stays a single general-purpose agent covering all signal sources, or whether some domains warrant splitting out later (currently leaning toward single agent, single session).

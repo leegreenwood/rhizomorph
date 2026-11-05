@@ -37,4 +37,4 @@ launchctl kickstart gui/$(id -u)/com.rhizomorph.repeat-after-completion      # r
 launchctl bootout gui/$(id -u)/com.rhizomorph.repeat-after-completion        # remove
 ```
 
-Unlike the receivers this *can* use launchd: the repo lives on the local disk, not `/Volumes/Flexdrive` (see the repo README). RemCTL needs no extra grants under launchd — Reminders, Automation and Full Disk Access belong to RemCTL's signed Capability Host, not the calling process (verified with a launchd dry run). If `remctl doctor` ever reports otherwise, run `remctl onboard`.
+This can use launchd because the repo lives on the local disk, not `/Volumes/Flexdrive` (see the repo README). RemCTL needs no extra grants under launchd — Reminders, Automation and Full Disk Access belong to RemCTL's signed Capability Host, not the calling process (verified with a launchd dry run). If `remctl doctor` ever reports otherwise, run `remctl onboard`.
