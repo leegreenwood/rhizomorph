@@ -2,11 +2,11 @@
   "mcpServers": {
     "hyphae": {
       "type": "stdio",
-      "command": "/opt/homebrew/opt/node@22/bin/node",
+      "command": "/opt/homebrew/opt/node/bin/node",
       "args": [
         "server.js"
       ],
-      "cwd": "/Volumes/Flexdrive/Code/hyphae"
+      "cwd": "/Users/leegreenwood/Code/hyphae"
     },
     "remctl": {
       "type": "stdio",
