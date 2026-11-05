@@ -21,6 +21,7 @@ while true; do
   agent com.rhizomorph.receiver-netlify
   agent com.rhizomorph.receiver-github
   agent com.rhizomorph.repeat-after-completion
+  agent com.rhizomorph.board-labels
   print "\nListeners / Funnel"
   for p in 8788 8789; do
     lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1 && print "  :$p listening" || print "  :$p NOT LISTENING"
@@ -31,6 +32,11 @@ while true; do
     | python3 -c 'import sys,json
 for l in sys.stdin:
     d=json.loads(l); print("  %s  tagged=%s reopened=%s waiting=%s skipped=%s failed=%s"%(d["ts"][:16].replace("T"," ")+"Z",d["tagged"],d["reopened"],d["waiting"],d["skipped"],d["failed"]))' || print "  no runs yet"
+  print "\nBoard labels check (last run)"
+  grep '"run_summary"' "$ROOT/checks/board-labels/logs/board-labels.log" 2>/dev/null | tail -1 \
+    | python3 -c 'import sys,json
+for l in sys.stdin:
+    d=json.loads(l); print("  %s  matched=%s printed=%s skipped=%s failed=%s"%(d["ts"][:16].replace("T"," ")+"Z",d["matched"],d["printed"],d["skipped_already_printed"],d["failed"]))' || print "  no runs yet"
   print "\nLast webhook events"
   for s in netlify github; do print "  $s: $(grep -E '^20' "$ROOT/receivers/$s/logs/out.log" 2>/dev/null | tail -1 | cut -c1-100)"; done
   sleep 5

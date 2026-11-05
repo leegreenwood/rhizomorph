@@ -23,7 +23,7 @@ launchctl kickstart -k gui/$(id -u)/com.rhizomorph.receiver-github   # restart (
 launchctl print gui/$(id -u)/com.rhizomorph.receiver-github | grep -E "state|pid|runs|last exit"
 ```
 
-The Herdr "Rhizomorph" workspace (live status board + merged log tail) is built by `bin/rhizomorph-workspace` (idempotent; re-run after a Herdr/Mac restart). The board itself is `bin/rhizomorph-status` (read-only).
+The Herdr "Rhizomorph" workspace (live status board + merged log tail) is built by `bin/rhizomorph-workspace` (idempotent; run once at login by the `com.rhizomorph.workspace` LaunchAgent, plist in `bin/`; re-run by hand if Herdr alone restarts). The board itself is `bin/rhizomorph-status` (read-only).
 
 ## Architecture
 

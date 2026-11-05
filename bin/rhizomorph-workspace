@@ -3,7 +3,7 @@
 #   left  = live status board (bin/rhizomorph-status), right = merged log tail.
 # Idempotent. Herdr restores a workspace's panes after a restart but not the commands inside them, so
 # an existing workspace is repaired: any pane that is back at a bare shell gets its command restarted.
-# Needs the Herdr server running.
+# Waits for the Herdr server, so it can run at login (com.rhizomorph.workspace) before the server is up.
 ROOT="${0:A:h:h}"
 LABEL=Rhizomorph
 STATUS_CMD="$ROOT/bin/rhizomorph-status"
@@ -11,7 +11,18 @@ LOGS_CMD="tail -n 20 -F $ROOT/receivers/netlify/logs/out.log $ROOT/receivers/git
 
 json() { python3 -c "import sys,json; d=json.load(sys.stdin); $1"; }
 
-WS=$(herdr workspace list | json "print(next((w['workspace_id'] for w in d['result']['workspaces'] if w['label']=='$LABEL'), ''))")
+WAITED=0
+until herdr workspace list 2>/dev/null | json "d['result']['workspaces']" 2>/dev/null; do
+  if (( WAITED >= 120 )); then
+    echo "Herdr server not reachable after ${WAITED}s." >&2
+    exit 1
+  fi
+  sleep 2
+  (( WAITED += 2 ))
+done
+
+# Match the label case-insensitively: a workspace renamed "rhizomorph" in Herdr is still this one.
+WS=$(herdr workspace list | json "print(next((w['workspace_id'] for w in d['result']['workspaces'] if (w.get('label') or '').lower()=='$LABEL'.lower()), ''))")
 
 if [[ -z "$WS" ]]; then
   CREATED=$(herdr workspace create --cwd "$ROOT" --label "$LABEL" --no-focus)
