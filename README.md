@@ -66,7 +66,7 @@ More than one unrelated Node service on this Mac is literally named `server.js` 
 
 ### 5. Hyphae pull — scheduled check
 
-[`checks/pull-hyphae/`](checks/pull-hyphae/) runs `git pull --ff-only` on `~/Code/hyphae` at 08:00 through a per-user launchd LaunchAgent, to bring down the daily notes. It only fast-forwards the local working copy and never pushes, so it isn't approval-gated; failures push through the same Moshi webhook as the receivers. Details in its README.
+[`checks/pull-hyphae/`](checks/pull-hyphae/) starts Hyphae's daily note workflow at 08:00 through a per-user launchd LaunchAgent, waits for it, then runs `git pull --ff-only` on `~/Code/hyphae`. GitHub has been starting that workflow's own schedule hours late, and the schedule stays as a backup. The job starts only that one workflow, fast-forwards the local copy and never pushes, so it isn't approval-gated; failures push through the same Moshi webhook as the receivers. Details in its README.
 
 ### 6. OmniFocus daily digest — not planned
 

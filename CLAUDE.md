@@ -51,7 +51,7 @@ Exposure: Tailscale Funnel path-routes `/netlify/webhook` and `/github/webhook` 
 
 `checks/board-labels/` (Python, own `.venv`, `pip install -r requirements.txt`) prints a label per Gmail thread tagged `To Do` and swaps the tag to `@Triaged`, for one or several Gmail accounts (`GMAIL_ACCOUNTS`). Mail access is Gmail IMAP with per-account app passwords by default (`MAIL_BACKEND=imap`; Superhuman's MCP is the selectable alternative); run `board_labels.py --dry-run` before a real run, `--imap-auth [EMAIL ...]` once per account to store its app password in the Keychain, and `.venv/bin/python -m unittest` for the tests. Its only write is that one tag swap on opted-in threads — the same narrow exemption, not a precedent.
 
-`checks/pull-hyphae/` runs `git pull --ff-only` on `~/Code/hyphae` at 08:00 for the latest daily notes; run `node pull-hyphae.js` to test it. It writes only to that local working copy, by fast-forward, and never pushes — a third narrow exemption Lee asked for, also not a precedent.
+`checks/pull-hyphae/` starts Hyphae's `daily-note.yml` workflow at 08:00, waits for it, then runs `git pull --ff-only` on `~/Code/hyphae`; `node pull-hyphae.js` runs it for real, as there is no dry run. It starts only that one workflow, writes locally only by fast-forward and never pushes — a third narrow exemption Lee asked for, also not a precedent.
 
 ## Local model helper
 
