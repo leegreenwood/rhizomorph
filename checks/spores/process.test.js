@@ -76,7 +76,7 @@ test("approved: the reminder is added and the spore leaves the queue", async () 
     assert.match(calls, /remctl add --list-id 6 --json -- Clean the fridge/);
     assert.ok(calls.indexOf("moshi ask") < calls.indexOf("remctl add"), "asks before acting");
     const spore = await box.get(id);
-    assert.equal(spore.status, "processed");
+    assert.equal(spore.status, "archived");
     assert.equal(spore.flagged_at ?? null, null);
     assert.deepEqual(spore.tags, ["rhizomorph"]);
   } finally { box.cleanup(); }
@@ -91,8 +91,8 @@ test("only one card is out at a time, and the next follows the answer", async ()
     const calls = box.calls();
     assert.doesNotMatch(calls, /overlap/);
     assert.equal(calls.match(/moshi ask/g).length, 2);
-    assert.equal((await box.get(first)).status, "processed");
-    assert.equal((await box.get(second)).status, "processed");
+    assert.equal((await box.get(first)).status, "archived");
+    assert.equal((await box.get(second)).status, "archived");
   } finally { box.cleanup(); }
 });
 
@@ -158,7 +158,7 @@ test("a crash after adding doesn't add it twice", async () => {
     }));
     await box.work();
     assert.doesNotMatch(box.calls(), /remctl add|moshi ask/);
-    assert.equal((await box.get(id)).status, "processed");
+    assert.equal((await box.get(id)).status, "archived");
   } finally { box.cleanup(); }
 });
 

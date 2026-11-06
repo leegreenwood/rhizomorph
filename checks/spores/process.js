@@ -111,7 +111,7 @@ async function markFailed(spore, what, err) {
 }
 
 async function recordDone(spore, entry) {
-  await finish(spore, ["--status", "processed", "--no-flagged", ...outcomeArgs(TAG_DONE)], "reminder_added", {
+  await finish(spore, ["--status", "archived", "--no-flagged", ...outcomeArgs(TAG_DONE)], "reminder_added", {
     reminder_id: entry.reminder_id, title: entry.proposal.title, list: entry.proposal.list,
   });
   counts.approved++;

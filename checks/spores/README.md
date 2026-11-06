@@ -18,7 +18,7 @@ Two parts, so an idle minute costs nothing:
 
 | What happened | Spore afterwards | Tag |
 |---|---|---|
-| Approved and added | `processed`, flag cleared | `rhizomorph` |
+| Approved and added | `archived`, flag cleared | `rhizomorph` |
 | Declined | still `new`, flag cleared | `rhizomorph-declined` |
 | No action proposed, or an RSS spore | still `new`, flag cleared, Moshi push | `rhizomorph-unsure` |
 | Classifying or adding failed | still `new`, flag cleared, Moshi error push | `rhizomorph-failed` |
