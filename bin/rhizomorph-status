@@ -23,6 +23,7 @@ while true; do
   agent com.rhizomorph.repeat-after-completion
   agent com.rhizomorph.board-labels
   agent com.rhizomorph.pull-hyphae
+  agent com.rhizomorph.spores
   print "\nListeners / Funnel"
   for p in 8788 8789; do
     lsof -nP -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1 && print "  :$p listening" || print "  :$p NOT LISTENING"
@@ -43,6 +44,11 @@ for l in sys.stdin:
     | python3 -c 'import sys,json
 for l in sys.stdin:
     d=json.loads(l); print("  %s  ok=%s commits=%s"%(d["ts"][:16].replace("T"," ")+"Z",d["ok"],d["commits"]))' || print "  no runs yet"
+  print "\nSpores (worker in the pane below the logs; last finished run)"
+  grep '"run_summary"' "$ROOT/checks/spores/logs/spores.log" 2>/dev/null | tail -1 \
+    | python3 -c 'import sys,json
+for l in sys.stdin:
+    d=json.loads(l); print("  %s  added=%s declined=%s unsure=%s failed=%s"%(d["ts"][:16].replace("T"," ")+"Z",d["approved"],d["declined"],d["unsure"],d["failed"]))' || print "  no runs yet"
   print "\nLast webhook events"
   for s in netlify github; do print "  $s: $(grep -E '^20' "$ROOT/receivers/$s/logs/out.log" 2>/dev/null | tail -1 | cut -c1-100)"; done
   sleep 5

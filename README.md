@@ -11,6 +11,7 @@ Replaces **Hermes**, a previous Slack-based notification/routing tool that only 
 This is enforced structurally, not just by convention:
 - Claude Code's default permission model already pauses on tool calls that would mutate state unless `--dangerously-skip-permissions` is passed — so simply *not* passing that flag gives the gating for free.
 - Moshi's agent hooks (via `moshi-hook`) surface exactly this pause as an **approval** event — Approve/Deny from the lock screen, Dynamic Island, or Apple Watch, without opening the app or reconnecting to a terminal.
+- Scripts that act without a Claude session gate themselves the same way with `moshi-hook ask --require-remote`, which reaches the phone through the same daemon and blocks until answered. [`checks/spores/`](checks/spores/) does this.
 - Approvals and turn-completions arrive as separate, distinguishable event types in Moshi's inbox.
 
 ## Architecture
@@ -50,7 +51,7 @@ Both receivers run, as do the [repeat-after-completion](checks/repeat-after-comp
 
 #### Herdr window
 
-`bin/rhizomorph-workspace` creates (idempotently) a Herdr workspace named "Rhizomorph": left pane `bin/rhizomorph-status` (LaunchAgent state, listeners, Funnel routes, last check run, last webhook events), right pane a merged `tail -F` of the receiver and check logs. The `com.rhizomorph.workspace` LaunchAgent ([`bin/com.rhizomorph.workspace.plist`](bin/com.rhizomorph.workspace.plist)) runs it once at login, after waiting for the Herdr server, so the panes come back after a Mac restart. It only runs at login, so re-run the script by hand if Herdr alone restarts.
+`bin/rhizomorph-workspace` creates (idempotently) a Herdr workspace named "Rhizomorph": left pane `bin/rhizomorph-status` (LaunchAgent state, listeners, Funnel routes, last check run, last webhook events), top right a merged `tail -F` of the receiver and check logs, and bottom right the Spores worker, which is a bare shell until something is flagged. The `com.rhizomorph.workspace` LaunchAgent ([`bin/com.rhizomorph.workspace.plist`](bin/com.rhizomorph.workspace.plist)) runs it once at login, after waiting for the Herdr server, so the panes come back after a Mac restart. It only runs at login, so re-run the script by hand if Herdr alone restarts.
 
 #### Process-naming gotcha
 
@@ -72,9 +73,9 @@ More than one unrelated Node service on this Mac is literally named `server.js` 
 
 Was floated as a candidate signal source; confirmed **not** a planned feature. The OmniFocus MCP server has been removed from `.mcp.json`.
 
-### 7. Spores — not wired up yet
+### 7. Spores — scheduled check, approval-gated
 
-Rhizomorph doesn't read [Spores](../spores-app) yet. When it does, it will act only on spores the user flags with **Z** (`spores list --flagged --json`), and flagged RSS text stays untrusted.
+[`checks/spores/`](checks/spores/) handles the spores the user flags with **Z** in [Spores](../spores-app). A launchd LaunchAgent checks every minute and, when something is flagged, starts a worker in the Spores pane of the Herdr workspace. A tool-free Claude call proposes an action, `moshi-hook ask` puts it to the user's phone, and fixed code carries it out only on a yes. Today the one action is adding an Apple Reminder. Flagged RSS text is untrusted, so it never reaches the model. Details in its README.
 
 ## Local model helper
 
@@ -88,6 +89,7 @@ Deterministic scripts and the webhook receivers run under **launchd** (see [Proc
 
 - [x] Confirm the name — "Rhizomorph" confirmed, workspace is labeled accordingly.
 - [ ] Scope the permission policy precisely: which tools are read-only/auto-approved vs. which require a Moshi approval round-trip.
+- [ ] Add more Spores actions beyond reminders, and decide what a flagged RSS post should do.
 - [x] Build the Netlify webhook receiver + Tailscale Funnel exposure — live for all 12 sites.
 - [x] Build the GitHub Actions webhook receiver + Tailscale Funnel exposure — live for 5 repos, configured via `gh api` rather than the dashboard.
 - [ ] Decide whether Rhizomorph stays a single general-purpose agent covering all signal sources, or whether some domains warrant splitting out later (currently leaning toward single agent, single session).

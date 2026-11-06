@@ -1,9 +1,16 @@
 #!/bin/zsh
 # Ensure the "Rhizomorph" Herdr workspace exists and its panes are running:
-#   left  = live status board (bin/rhizomorph-status), right = merged log tail.
+#   left = live status board (bin/rhizomorph-status), top right = merged log tail,
+#   bottom right = the Spores worker, started on demand by checks/spores/tick.js and otherwise a bare shell.
 # Idempotent. Herdr restores a workspace's panes after a restart but not the commands inside them, so
 # an existing workspace is repaired: any pane that is back at a bare shell gets its command restarted.
 # Waits for the Herdr server, so it can run at login (com.rhizomorph.workspace) before the server is up.
+# With --spores-pane, stdout is only the Spores pane's id, for tick.js to read.
+SPORES_PANE_MODE=
+if [[ $1 == --spores-pane ]]; then
+  SPORES_PANE_MODE=1
+  exec 3>&1 1>&2
+fi
 ROOT="${0:A:h:h}"
 LABEL=Rhizomorph
 STATUS_CMD="$ROOT/bin/rhizomorph-status"
@@ -32,14 +39,24 @@ if [[ -z "$WS" ]]; then
   echo "Created workspace \"$LABEL\" ($WS)."
 fi
 
-# Panes in creation order: first = status board, second = logs.
-PANES=(${(f)"$(herdr pane list | json "
+# Panes in creation order: first = status board, second = logs, third = Spores worker.
+list_panes() {
+  PANES=(${(f)"$(herdr pane list | json "
 ids=[p['pane_id'] for p in d['result']['panes'] if p.get('workspace_id')=='$WS']
 print('\n'.join(sorted(ids, key=lambda s: [int(x) for x in __import__('re').findall(r'\d+', s)])))")"})
+}
+list_panes
 
 if (( ${#PANES} < 2 )); then
-  echo "Workspace \"$LABEL\" ($WS) has ${#PANES} pane(s), expected 2 — close it in Herdr and re-run." >&2
+  echo "Workspace \"$LABEL\" ($WS) has ${#PANES} pane(s), expected at least 2 — close it in Herdr and re-run." >&2
   exit 1
+fi
+
+if (( ${#PANES} < 3 )); then
+  herdr pane split "${PANES[2]}" --direction down --cwd "$ROOT" --no-focus >/dev/null
+  list_panes
+  herdr pane rename "${PANES[3]}" Spores >/dev/null
+  echo "  ${PANES[3]}: added for the Spores worker"
 fi
 
 ensure() { # pane, marker that identifies the running command, command to start
@@ -54,3 +71,6 @@ ensure() { # pane, marker that identifies the running command, command to start
 echo "Workspace \"$LABEL\" ($WS):"
 ensure "${PANES[1]}" "rhizomorph-status" "$STATUS_CMD"
 ensure "${PANES[2]}" "tail -n 20 -F" "$LOGS_CMD"
+
+[[ -n $SPORES_PANE_MODE ]] && print -u3 -- "${PANES[3]}"
+exit 0

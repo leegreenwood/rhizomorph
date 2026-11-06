@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rhizomorph is a signal-handling agent (webhooks, scheduled checks) running as a persistent, named Herdr session/workspace on this Mac — a sibling to **Hyphae**, the personal-context MCP server at `~/Code/hyphae`. Full architecture and rationale: [README.md](README.md).
 
-**Core design principle — no autonomous actions.** Anything that mutates state must go through Claude Code's normal permission-prompt gate (never run this session with `--dangerously-skip-permissions`) so it surfaces as a Moshi approval on the user's phone via `moshi-hook`. Read-only work runs freely. Keep this invariant when adding any new signal source or receiver.
+**Core design principle — no autonomous actions.** Anything that mutates state must go through Claude Code's normal permission-prompt gate (never run this session with `--dangerously-skip-permissions`) so it surfaces as a Moshi approval on the user's phone via `moshi-hook`. Read-only work runs freely. A script that acts without a Claude session gates itself with `moshi-hook ask --require-remote` instead, as `checks/spores/` does. Keep this invariant when adding any new signal source or receiver.
 
 ## Commands
 
@@ -23,7 +23,7 @@ launchctl kickstart -k gui/$(id -u)/com.rhizomorph.receiver-github   # restart (
 launchctl print gui/$(id -u)/com.rhizomorph.receiver-github | grep -E "state|pid|runs|last exit"
 ```
 
-The Herdr "Rhizomorph" workspace (live status board + merged log tail) is built by `bin/rhizomorph-workspace` (idempotent; run once at login by the `com.rhizomorph.workspace` LaunchAgent, plist in `bin/`; re-run by hand if Herdr alone restarts). The board itself is `bin/rhizomorph-status` (read-only).
+The Herdr "Rhizomorph" workspace (live status board, merged log tail and the Spores worker's pane) is built by `bin/rhizomorph-workspace` (idempotent; run once at login by the `com.rhizomorph.workspace` LaunchAgent, plist in `bin/`; re-run by hand if Herdr alone restarts). The board itself is `bin/rhizomorph-status` (read-only).
 
 ## Architecture
 
@@ -52,6 +52,8 @@ Exposure: Tailscale Funnel path-routes `/netlify/webhook` and `/github/webhook` 
 `checks/board-labels/` (Python, own `.venv`, `pip install -r requirements.txt`) prints a label per Gmail thread tagged `To Do` and swaps the tag to `@Triaged`, for one or several Gmail accounts (`GMAIL_ACCOUNTS`). Mail access is Gmail IMAP with per-account app passwords by default (`MAIL_BACKEND=imap`; Superhuman's MCP is the selectable alternative); run `board_labels.py --dry-run` before a real run, `--imap-auth [EMAIL ...]` once per account to store its app password in the Keychain, and `.venv/bin/python -m unittest` for the tests. Its only write is that one tag swap on opted-in threads — the same narrow exemption, not a precedent.
 
 `checks/pull-hyphae/` starts Hyphae's `daily-note.yml` workflow at 08:00, waits for it, then runs `git pull --ff-only` on `~/Code/hyphae`; `node pull-hyphae.js` runs it for real, as there is no dry run. It starts only that one workflow, writes locally only by fast-forward and never pushes — a third narrow exemption Lee asked for, also not a precedent.
+
+`checks/spores/` is the first check that decides what to do. Every minute `tick.js` looks for flagged spores and starts `process.js` in the workspace's Spores pane. A Claude call with no tools proposes an action, `lib.js` checks it, `moshi-hook ask --require-remote` asks Lee, and fixed code runs it only on a yes. It isn't exempt from the approval rule: every write to Reminders is approved first. Its only unapproved writes are its own tags, status and flag on spores Lee flagged. Keep the model's output a proposal, never a command, and keep RSS text away from the model. Run `node --test` there, and `node process.js --dry-run` to see what would be asked.
 
 ## Local model helper
 
