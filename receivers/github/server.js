@@ -57,7 +57,13 @@ app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 app.post("/github/webhook", async (req, res) => {
   const signature = req.headers["x-hub-signature-256"];
   if (!validSignature(signature, req.rawBody)) {
-    console.warn(`${new Date().toISOString()} Rejected webhook with invalid/missing signature`);
+    const reason = signature ? "invalid" : "missing";
+    const delivery = req.headers["x-github-delivery"] || "none";
+    const userAgent = JSON.stringify(req.headers["user-agent"] || "none");
+    const forwardedFor = JSON.stringify(req.headers["x-forwarded-for"] || "none");
+    console.warn(
+      `${new Date().toISOString()} Rejected webhook with ${reason} signature: delivery=${delivery} user_agent=${userAgent} forwarded_for=${forwardedFor}`
+    );
     return res.status(403).send("invalid signature");
   }
 
