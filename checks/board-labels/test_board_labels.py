@@ -19,7 +19,6 @@ class FakeBackend:
     """Class-level script so each account gets its own threads / failure."""
     threads = {}
     enter_error = {}
-    swapped = []
 
     def __init__(self, account):
         self.account = account
@@ -38,9 +37,6 @@ class FakeBackend:
     async def list_threads(self):
         return [dict(t) for t in self.threads.get(self.account, [])]
 
-    async def swap(self, t):
-        self.swapped.append((self.account, t["thread_id"]))
-
 
 def thread(tid, subject="Subject"):
     return {"thread_id": tid, "subject": subject, "sender": "Someone", "date": "2026-10-30"}
@@ -49,7 +45,7 @@ def thread(tid, subject="Subject"):
 class RunTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        FakeBackend.threads, FakeBackend.enter_error, FakeBackend.swapped = {}, {}, []
+        FakeBackend.threads, FakeBackend.enter_error = {}, {}
         self.printed_calls, self.alerts = [], []
         patches = [
             mock.patch.object(bl, "PRINTED_FILE", self.tmp / "printed.json"),
@@ -82,18 +78,17 @@ class RunTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GMAIL_ACCOUNTS": ""}):
             self.assertEqual(bl.accounts(), [A])
 
-    def test_both_accounts_print_and_swap_with_namespaced_keys(self):
+    def test_both_accounts_print_with_namespaced_keys(self):
         FakeBackend.threads = {A: [thread("aaa")], B: [thread("bbb")]}
         self.assertEqual(self.run_check(), 0)
         self.assertEqual(len(self.printed_calls), 2)
-        self.assertEqual(sorted(FakeBackend.swapped), sorted([(A, "aaa"), (B, "bbb")]))
         self.assertEqual(self.printed_file(), {"aaa", f"{B}:bbb"})   # original account keeps bare ids
 
     def test_same_thread_id_in_two_accounts_is_not_confused(self):
         bl.PRINTED_FILE.write_text(json.dumps(["same"]))   # printed for the original account only
         FakeBackend.threads = {A: [thread("same")], B: [thread("same")]}
         self.assertEqual(self.run_check(), 0)
-        self.assertEqual(FakeBackend.swapped, [(B, "same")])
+        self.assertEqual(self.printed_file(), {"same", f"{B}:same"})
         self.assertEqual(len(self.printed_calls), 1)
 
     def test_legacy_ids_still_block_reprints(self):
@@ -101,26 +96,24 @@ class RunTests(unittest.TestCase):
         FakeBackend.threads = {A: [thread("1987a98e911f1685")]}
         self.assertEqual(self.run_check(), 0)
         self.assertEqual(self.printed_calls, [])
-        self.assertEqual(FakeBackend.swapped, [])
 
     def test_one_account_failing_does_not_stop_the_other(self):
         FakeBackend.enter_error = {A: "login failed"}
         FakeBackend.threads = {B: [thread("bbb")]}
         self.assertEqual(self.run_check(), 1)
-        self.assertEqual(FakeBackend.swapped, [(B, "bbb")])
+        self.assertEqual(self.printed_file(), {f"{B}:bbb"})
         self.assertEqual(len(self.alerts), 1)
         self.assertIn(A, self.alerts[0][1])
         self.assertIn("login failed", self.alerts[0][1])
 
-    def test_print_failure_leaves_labels_and_is_retried(self):
+    def test_print_failure_is_retried(self):
         FakeBackend.threads = {A: [thread("aaa")]}
         with mock.patch.object(bl, "print_label", side_effect=RuntimeError("printer offline")):
             self.assertEqual(self.run_check(), 1)
-        self.assertEqual(FakeBackend.swapped, [])
         self.assertEqual(self.printed_file(), set())   # not recorded, so the next run prints it
         self.assertEqual(self.alerts[0][0], "🔴 Board label print failed")
 
-    def test_printer_down_stops_the_run_and_retags_nothing(self):
+    def test_printer_down_stops_the_run_and_records_nothing(self):
         FakeBackend.threads = {A: [thread("a1"), thread("a2")], B: [thread("b1")]}
         attempts = []
         def offline(img):
@@ -129,18 +122,16 @@ class RunTests(unittest.TestCase):
         with mock.patch.object(bl, "print_label", offline):
             self.assertEqual(self.run_check(), 1)
         self.assertEqual(len(attempts), 1, "after one timeout, no further labels are tried this run (or on other accounts)")
-        self.assertEqual(FakeBackend.swapped, [])
         self.assertEqual(self.printed_file(), set())
         self.assertEqual(len(self.alerts), 1)
         # printer back: the next run prints everything that was left
         self.assertEqual(self.run_check(), 0)
-        self.assertEqual(sorted(FakeBackend.swapped), sorted([(A, "a1"), (A, "a2"), (B, "b1")]))
+        self.assertEqual(self.printed_file(), {"a1", "a2", f"{B}:b1"})
 
-    def test_dry_run_prints_and_swaps_nothing(self):
+    def test_dry_run_prints_nothing(self):
         FakeBackend.threads = {A: [thread("aaa")]}
         self.assertEqual(self.run_check(dry_run=True), 0)
         self.assertEqual(self.printed_calls, [])
-        self.assertEqual(FakeBackend.swapped, [])
         self.assertEqual(self.printed_file(), set())
 
     def test_repeated_failure_alerts_once_then_again_after_recovery(self):

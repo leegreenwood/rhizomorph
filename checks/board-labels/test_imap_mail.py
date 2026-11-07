@@ -17,14 +17,13 @@ def fetch_item(uid, thrid, headers, trailing=b")"):
 class FakeImap:
     """Just enough of imaplib.IMAP4_SSL for ImapMail; records every command."""
 
-    def __init__(self, search=b"", fetches=None, login_error=None, list_lines=None, fail_store=False):
+    def __init__(self, search=b"", fetches=None, login_error=None, list_lines=None):
         self.search, self.fetches = search, fetches or {}
-        self.login_error, self.fail_store = login_error, fail_store
+        self.login_error = login_error
         self.list_lines = list_lines if list_lines is not None else [
             b'(\\HasNoChildren) "/" "INBOX"',
             b'(\\HasNoChildren \\All) "/" "[Gmail]/All Mail"',
-            b'(\\HasNoChildren) "/" "To Do"',
-            b'(\\HasNoChildren) "/" "@Triaged"',
+            b'(\\HasNoChildren) "/" "Pinned"',
         ]
         self.calls = []
 
@@ -50,8 +49,6 @@ class FakeImap:
             for u in args[0].split(","):
                 data += self.fetches[int(u)]
             return "OK", data
-        if command == "STORE":
-            return ("NO", [b"nope"]) if self.fail_store else ("OK", [b"done"])
         raise AssertionError(command)
 
     def logout(self):
@@ -78,8 +75,7 @@ class Helpers(unittest.TestCase):
 
     def test_parse_list_finds_labels_and_all_mail(self):
         names, all_mail = im.parse_list(FakeImap().list()[1])
-        self.assertIn("To Do", names)
-        self.assertIn("@Triaged", names)
+        self.assertIn("Pinned", names)
         self.assertEqual(all_mail, "[Gmail]/All Mail")
 
     def test_parse_fetch_decodes_headers_and_ids(self):
@@ -113,13 +109,13 @@ class Helpers(unittest.TestCase):
 class Client(unittest.TestCase):
     def make(self, **kw):
         fake = FakeImap(**kw)
-        c = im.ImapMail("me@gmail.com", "pw", "To Do", "@Triaged", factory=lambda: fake)
+        c = im.ImapMail("me@gmail.com", "pw", "Pinned", factory=lambda: fake)
         return c, fake
 
     def test_connect_requires_login_and_finds_labels(self):
         c, _ = self.make()
         c.connect()
-        self.assertTrue(c.label_exists("@Triaged"))
+        self.assertTrue(c.label_exists("Pinned"))
         self.assertFalse(c.label_exists("Nope"))
 
     def test_login_failure_names_the_fix(self):
@@ -140,7 +136,7 @@ class Client(unittest.TestCase):
         self.assertEqual([t["thread_id"] for t in threads], ["64", "c8"])
         self.assertEqual(threads[0]["uids"], [1, 2])
         self.assertTrue(all(call[2] for call in fake.calls if call[0] == "select"), "listing must open All Mail read-only")
-        self.assertIn(("uid", "SEARCH", "X-GM-LABELS", '"To Do"'), fake.calls)
+        self.assertIn(("uid", "SEARCH", "X-GM-LABELS", '"Pinned"'), fake.calls)
         self.assertFalse([c for c in fake.calls if c[:2] == ("uid", "STORE")], "listing must not write")
 
     def test_no_matches(self):
@@ -148,21 +144,6 @@ class Client(unittest.TestCase):
         c.connect()
         self.assertEqual(c.todo_threads(), [])
 
-    def test_swap_adds_done_before_removing_todo(self):
-        c, fake = self.make()
-        c.connect()
-        c.swap([4, 8])
-        stores = [call for call in fake.calls if call[:2] == ("uid", "STORE")]
-        self.assertEqual(stores[0], ("uid", "STORE", "4,8", "+X-GM-LABELS", '("@Triaged")'))
-        self.assertEqual(stores[1], ("uid", "STORE", "4,8", "-X-GM-LABELS", '("To Do")'))
-        self.assertFalse([call for call in fake.calls if call[0] == "select"][-1][2], "swap needs a writable select")
-
-    def test_failed_store_raises_and_never_removes_todo(self):
-        c, fake = self.make(fail_store=True)
-        c.connect()
-        with self.assertRaisesRegex(RuntimeError, "STORE add"):
-            c.swap([4])
-        self.assertEqual(len([call for call in fake.calls if call[:2] == ("uid", "STORE")]), 1)
 
     def test_large_searches_fetch_in_batches(self):
         n = im.FETCH_BATCH + 5

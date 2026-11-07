@@ -106,9 +106,9 @@ def group_threads(messages):
 
 
 class ImapMail:
-    def __init__(self, email_addr, password, label_todo, label_done, factory=None):
+    def __init__(self, email_addr, password, label_todo, factory=None):
         self.email, self.password = email_addr, password
-        self.todo, self.done = label_todo, label_done
+        self.todo = label_todo
         self._factory = factory or (lambda: imaplib.IMAP4_SSL(HOST, timeout=30))
         self._m = None
         self._all_mail = None
@@ -141,12 +141,9 @@ class ImapMail:
     def label_exists(self, label):
         return label in self._names
 
-    def _select(self, readonly):
-        self._check(self._m.select(quote(self._all_mail), readonly=readonly), "SELECT")
-
     def todo_threads(self):
-        """All threads carrying the To Do label, oldest first."""
-        self._select(readonly=True)
+        """All threads carrying the Pinned label, oldest first."""
+        self._check(self._m.select(quote(self._all_mail), readonly=True), "SELECT")
         data = self._check(self._m.uid("SEARCH", "X-GM-LABELS", quote(self.todo)), "SEARCH")
         uids = data[0].split() if data and data[0] else []
         messages = []
@@ -155,9 +152,3 @@ class ImapMail:
             messages += parse_fetch(self._check(self._m.uid("FETCH", batch, FETCH_ITEMS), "FETCH"))
         return group_threads(messages)
 
-    def swap(self, uids):
-        """Add the done label first, then remove To Do, so a thread is never left with neither."""
-        self._select(readonly=False)
-        uidset = ",".join(str(u) for u in uids)
-        self._check(self._m.uid("STORE", uidset, "+X-GM-LABELS", f"({quote(self.done)})"), "STORE add")
-        self._check(self._m.uid("STORE", uidset, "-X-GM-LABELS", f"({quote(self.todo)})"), "STORE remove")

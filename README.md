@@ -63,7 +63,7 @@ More than one unrelated Node service on this Mac is literally named `server.js` 
 
 ### 4. Board labels — scheduled check
 
-[`checks/board-labels/`](checks/board-labels/) prints a Brother QL-810W label for every Gmail thread tagged `To Do` (subject, sender, date) and retags it `@Triaged`, so sticking the label on the office card board is the act of pulling an email into active work. Plain Python, no AI call. Mail comes from Gmail over IMAP with per-account app passwords held in the login Keychain, so it runs unattended, with Superhuman's MCP server as the selectable alternative. Every 5 minutes via a per-user launchd LaunchAgent, same reasoning as `repeat-after-completion`; mutates only the one tag on threads the user opted in, so not approval-gated. Details, flags and setup in its README.
+[`checks/board-labels/`](checks/board-labels/) prints a Brother QL-810W label for every Gmail thread tagged `Pinned` (subject, sender, date), so sticking the label on the office card board is the act of pulling an email into active work. Plain Python, no AI call. Mail comes from Gmail over IMAP with per-account app passwords held in the login Keychain, so it runs unattended, with Superhuman's MCP server as the selectable alternative. Every 5 minutes via a per-user launchd LaunchAgent, same reasoning as `repeat-after-completion`; only reads mail and only prints threads the user opted in, so not approval-gated. Details, flags and setup in its README.
 
 ### 5. Hyphae pull — scheduled check
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print a Brother QL label for every Gmail thread tagged "To Do", then retag it "@Triaged".
+"""Print a Brother QL label for every Gmail thread tagged "Pinned". Gmail is only read; nothing is retagged.
 
 Mail comes from Gmail over IMAP with a per-account app password (MAIL_BACKEND=imap, default; works
 for several accounts via GMAIL_ACCOUNTS) or from Superhuman's remote MCP server (MAIL_BACKEND=superhuman).
@@ -35,8 +35,7 @@ from pydantic import AnyUrl
 from imap_mail import ImapMail
 
 # ---- the few things you might change -------------------------------------------------------
-LABEL_TODO = "To Do"          # Gmail/Superhuman label that means "print me"
-LABEL_DONE = "@Triaged"      # swapped in after a successful print
+LABEL_TODO = "Pinned"         # Gmail/Superhuman label that means "print me"
 ACCOUNT_EMAIL = "lee.greenwood@gmail.com"   # default account; its printed-ids.json entries are stored without a prefix
 PRINTER_MODEL = "QL-810W"
 ROLL = "62"                   # brother_ql label id: continuous 62mm tape (696 px printable width)
@@ -273,7 +272,7 @@ def render(subject, sender, date):
 # ---- Printing ----------------------------------------------------------------------------------
 
 class PrinterUnavailable(RuntimeError):
-    """The printer did not take the job (off, unplugged, asleep). Nothing is retagged; the next run retries."""
+    """The printer did not take the job (off, unplugged, asleep). The thread is not recorded; the next run retries."""
 
 
 PRINT_WAIT_S = 60   # a label takes seconds; longer than this means the printer isn't there
@@ -322,8 +321,7 @@ def print_label(img):
 
 
 # ---- Mail backends -----------------------------------------------------------------------------
-# Both expose: async with Backend(account) -> labels_ok(), list_threads() -> [{thread_id, subject, sender, date, ...}],
-# swap(thread). A thread dict carries whatever extra the backend needs to swap its labels.
+# Both expose: async with Backend(account) -> labels_ok(), list_threads() -> [{thread_id, subject, sender, date, ...}].
 
 def sender_of(msg):
     name = (msg.get("from_name") or "").strip()
@@ -355,8 +353,8 @@ class SuperhumanBackend:
     async def labels_ok(self):
         res = await self._client.call_tool("list_labels", {"acting_email": self.account})
         labels = json.loads(res.content[0].text).get("labels", []) if not res.is_error else []
-        if LABEL_DONE not in labels:   # don't print anything we could not then retag
-            log("label_missing", account=self.account, label=LABEL_DONE, detail="create it in Superhuman/Gmail first")
+        if LABEL_TODO not in labels:
+            log("label_missing", account=self.account, label=LABEL_TODO, detail="create it in Superhuman/Gmail first")
             return False
         return True
 
@@ -381,15 +379,8 @@ class SuperhumanBackend:
         out = []
         for t in threads:
             msg = (t.get("messages") or [{}])[-1]
-            out.append({"thread_id": t["thread_id"], "subject": t.get("subject", ""), "sender": sender_of(msg), "date": date_of(msg), "_raw": t})
+            out.append({"thread_id": t["thread_id"], "subject": t.get("subject", ""), "sender": sender_of(msg), "date": date_of(msg)})
         return out
-
-    async def swap(self, t):
-        raw = t["_raw"]
-        res = await self._client.call_tool("update_thread", {"thread_id": raw["thread_id"], "last_message_id": raw["last_message_id"],
-                                                              "add_labels": [LABEL_DONE], "remove_labels": [LABEL_TODO], "acting_email": self.account})
-        if res.is_error:
-            raise RuntimeError(f"update_thread: {res.content[0].text if res.content else res}")
 
 
 class ImapBackend:
@@ -402,7 +393,7 @@ class ImapBackend:
         password = kc_get(imap_account(self.account))
         if not password:
             raise RuntimeError(f"no Gmail app password stored for {self.account}. Run: board_labels.py --imap-auth {self.account}")
-        self._mail = ImapMail(self.account, password, LABEL_TODO, LABEL_DONE)
+        self._mail = ImapMail(self.account, password, LABEL_TODO)
         self._mail.connect()
         return self
 
@@ -410,18 +401,14 @@ class ImapBackend:
         self._mail.close()
 
     async def labels_ok(self):
-        for label in (LABEL_DONE, LABEL_TODO):   # DONE first: never print what we could not retag
-            if not self._mail.label_exists(label):
-                log("label_missing", account=self.account, label=label,
-                    detail="create it in Gmail, and make sure the label is set to 'Show in IMAP' (Gmail → Settings → Labels)")
-                return False
+        if not self._mail.label_exists(LABEL_TODO):
+            log("label_missing", account=self.account, label=LABEL_TODO,
+                detail="create it in Gmail, and make sure the label is set to 'Show in IMAP' (Gmail → Settings → Labels)")
+            return False
         return True
 
     async def list_threads(self):
         return self._mail.todo_threads()
-
-    async def swap(self, t):
-        self._mail.swap(t["uids"])
 
 
 def backend_name():
@@ -489,7 +476,6 @@ async def run_account(account, dry_run, printed, failures):
                 via = print_label(img)
                 printed.add(key)
                 PRINTED_FILE.write_text(json.dumps(sorted(printed)))
-                await backend.swap(t)
                 counts["printed"] += 1
                 log("printed", via=via, **info)
             except Exception as e:  # noqa: BLE001
@@ -537,10 +523,10 @@ def imap_auth(emails):
             print("  skipped (empty)")
             ok = False
             continue
-        mail = ImapMail(email, password, LABEL_TODO, LABEL_DONE)
+        mail = ImapMail(email, password, LABEL_TODO)
         try:
             mail.connect()
-            missing = [l for l in (LABEL_TODO, LABEL_DONE) if not mail.label_exists(l)]
+            missing = not mail.label_exists(LABEL_TODO)
         except Exception as e:  # noqa: BLE001
             print(f"  FAILED: {e}")
             ok = False
@@ -550,7 +536,7 @@ def imap_auth(emails):
         kc_set(imap_account(email), password)
         print(f"  OK: logged in, app password saved to the login Keychain.")
         if missing:
-            print(f"  WARNING: label(s) not visible over IMAP: {', '.join(missing)} — create them / set 'Show in IMAP' in Gmail → Settings → Labels.")
+            print(f"  WARNING: label not visible over IMAP: {LABEL_TODO} — create it / set 'Show in IMAP' in Gmail → Settings → Labels.")
     return 0 if ok else 1
 
 
